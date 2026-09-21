@@ -1,0 +1,647 @@
+{% extends "base.html" %}
+{% block title %}Fingerprint Management & Device Enrollment{% endblock %}
+{% block page_title %}Recognition Devices: Fingerprint Enrollment Hub{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Top KPI Badges -->
+    <div class="col-12">
+        <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between bg-white p-3 rounded shadow-sm border">
+            <div class="d-flex align-items-center gap-3">
+                <div class="p-3 bg-primary bg-opacity-10 text-primary rounded-circle">
+                    <i class="bi bi-fingerprint fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="mb-0 fw-bold">Biometric Fingerprint Hub</h5>
+                    <small class="text-muted">Enroll new hardware fingerprints or link pre-existing sensor template slots directly to students</small>
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <div class="badge bg-light text-dark border p-2 text-start">
+                    <span class="text-muted d-block small">Registered Devices</span>
+                    <span class="fw-bold fs-6">{{ cameras|length }}</span>
+                </div>
+                <div class="badge bg-light text-dark border p-2 text-start">
+                    <span class="text-muted d-block small">Active Fingerprints</span>
+                    <span class="fw-bold fs-6 text-success">{{ rows|length }}</span>
+                </div>
+                <div class="badge bg-light text-dark border p-2 text-start">
+                    <span class="text-muted d-block small">Total Active Students</span>
+                    <span class="fw-bold fs-6 text-primary">{{ students|length }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Left Column: Enrollment & Linking Hub -->
+    <div class="col-lg-5 col-xl-4">
+        <div class="card shadow-sm border-0 sticky-top" style="top: 80px; z-index: 10;">
+            <div class="card-header bg-white border-bottom p-0">
+                <ul class="nav nav-tabs nav-fill card-header-tabs m-0" id="enrollmentTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active py-3 fw-bold small text-uppercase" id="link-tab" data-bs-toggle="tab" data-bs-target="#link-panel" type="button" role="tab">
+                            <i class="bi bi-link-45deg me-1"></i> Link Existing Slot
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link py-3 fw-bold small text-uppercase" id="live-tab" data-bs-toggle="tab" data-bs-target="#live-panel" type="button" role="tab">
+                            <i class="bi bi-fingerprint me-1"></i> Live 2-Touch Scan
+                        </button>
+                    </li>
+                </ul>
+            </div>
+            <div class="card-body">
+                <!-- Shared Common Filters & Student Selector -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold small text-uppercase text-muted">1. Target Recognition Device *</label>
+                    <select class="form-select" id="sharedCameraId" required onchange="onSharedDeviceChanged()">
+                        <option value="">-- Select Recognition Device --</option>
+                        {% for c in cameras %}
+                        <option value="{{ c.id }}" data-ip="{{ c.rtsp_url }}" data-slots-used="{{ c.active_slots }}">
+                            {{ c.name }} {% if c.location %}({{ c.location }}){% endif %} — [{{ c.active_slots }}/127 used]
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text small" id="sharedSlotHint">Select the ESP32 node equipped with the fingerprint module.</div>
+                </div>
+
+                <!-- Filter Existing Students Box -->
+                <div class="p-3 bg-light rounded border mb-3">
+                    <label class="form-label fw-bold small text-uppercase text-muted d-flex justify-content-between align-items-center">
+                        <span>2. Filter Existing Students</span>
+                        <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none small" onclick="resetSharedStudentFilters()">Reset</button>
+                    </label>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <select class="form-select form-select-sm" id="sharedFilterDept" onchange="filterSharedStudentsList()">
+                                <option value="">All Depts</option>
+                                {% for d in departments %}
+                                <option value="{{ d.id }}">{{ d.code }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <select class="form-select form-select-sm" id="sharedFilterSem" onchange="filterSharedStudentsList()">
+                                <option value="">All Sems</option>
+                                {% for s in [1,2,3,4,5,6,7,8] %}
+                                <option value="{{ s }}">Sem {{ s }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <select class="form-select form-select-sm" id="sharedFilterSec" onchange="filterSharedStudentsList()">
+                                <option value="">All Sections</option>
+                                {% for sec in sections %}
+                                <option value="{{ sec.id }}" data-dept="{{ sec.department_id }}" data-sem="{{ sec.sem_number }}">
+                                    {{ sec.dept_code }} — Sem {{ sec.sem_number }} — Sec {{ sec.section_label }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                        <input type="text" class="form-control" id="sharedSearchText" placeholder="Search by USN or Name..." oninput="filterSharedStudentsList()">
+                    </div>
+                </div>
+
+                <!-- Student Dropdown -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold small text-muted text-uppercase">Select Student *</label>
+                    <select class="form-select" id="sharedStudentId" required onchange="onSharedStudentSelected()">
+                        <option value="">-- Choose Existing Student --</option>
+                        {% for s in students %}
+                        <option value="{{ s.id }}" 
+                                data-usn="{{ s.usn }}"
+                                data-name="{{ s.name }}"
+                                data-dept="{{ s.department_id }}"
+                                data-sem="{{ s.current_sem }}"
+                                data-sec="{{ s.section_id }}"
+                                data-sec-label="{{ s.dept_code }}-{{ s.section_label if s.section_label else 'N/A' }}"
+                                data-fp-count="{{ s.fp_count }}">
+                            {{ s.usn }} — {{ s.name }} ({{ s.dept_code }}-{{ s.section_label if s.section_label else 'Sec?' }}) {% if s.fp_count > 0 %}✓{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div id="sharedStudentDetailBox" class="mt-2 p-2 bg-white rounded border small d-none">
+                        <div class="d-flex justify-content-between">
+                            <span class="fw-bold" id="sharedCardStudentName">—</span>
+                            <span class="badge bg-secondary" id="sharedCardStudentSec">—</span>
+                        </div>
+                        <div class="text-muted" id="sharedCardStudentUsn">—</div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="enrollmentTabsContent">
+                    <!-- ================= TAB 1: LINK PRE-ENROLLED SLOT ================= -->
+                    <div class="tab-pane fade show active" id="link-panel" role="tabpanel">
+                        <form id="linkExistingForm">
+                            <div class="alert alert-info border-info p-2 small mb-3">
+                                <i class="bi bi-info-circle-fill me-1"></i>
+                                <strong>For Pre-Enrolled Fingerprints:</strong> If the student's finger is already stored on the sensor flash memory, enter their Slot ID (1–127) here to link them directly without re-scanning.
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label fw-bold small text-uppercase text-muted d-flex justify-content-between">
+                                    <span>Existing Template Slot ID (1–127) *</span>
+                                    <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none small" onclick="probeSensorLastScan()" title="Check what slot was scanned last on the hardware sensor">
+                                        <i class="bi bi-broadcast"></i> Detect Last Scan
+                                    </button>
+                                </label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light"><i class="bi bi-hash"></i></span>
+                                    <input type="number" class="form-control" id="linkTemplateId" min="1" max="127" placeholder="Enter Slot # (e.g. 1, 2, 3...)" required>
+                                </div>
+                                <div class="form-text small" id="probeResultText">Enter the hardware template slot number already saved on the sensor.</div>
+                            </div>
+
+                            <div id="linkAlert" class="alert d-none mb-3" role="alert"></div>
+
+                            <button type="submit" id="linkBtn" class="btn btn-success w-100 py-2 fw-semibold">
+                                <i class="bi bi-link-45deg me-1"></i> Link Slot to Student in Database
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- ================= TAB 2: LIVE 2-TOUCH HARDWARE SCAN ================= -->
+                    <div class="tab-pane fade" id="live-panel" role="tabpanel">
+                        <form id="liveEnrollForm">
+                            <div class="alert alert-light border p-2 mb-3 small">
+                                <div class="fw-semibold mb-1 text-primary"><i class="bi bi-hand-index-thumb-fill me-1"></i> 2-Touch Hardware Protocol:</div>
+                                <ol class="mb-0 ps-3 small text-muted">
+                                    <li>Click button & have student place finger on sensor.</li>
+                                    <li>Lift finger when prompted and place <strong>same finger</strong> again.</li>
+                                    <li>Sensor saves template in flash memory.</li>
+                                </ol>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label fw-bold small text-uppercase text-muted d-flex justify-content-between">
+                                    <span>Allocate Slot ID (1–127) *</span>
+                                    <span class="badge bg-info text-dark" id="liveSlotStatusBadge">Auto-Allocating...</span>
+                                </label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light"><i class="bi bi-hash"></i></span>
+                                    <input type="number" class="form-control" id="liveTemplateId" min="1" max="127" placeholder="Slot # (1-127)" required>
+                                    <button type="button" class="btn btn-outline-secondary" onclick="onSharedDeviceChanged()" title="Refresh Next Free Slot">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div id="liveAlert" class="alert d-none mb-3" role="alert"></div>
+
+                            <button type="submit" id="liveEnrollBtn" class="btn btn-primary w-100 py-2 fw-semibold">
+                                <i class="bi bi-fingerprint me-1"></i> Start Hardware 2-Touch Enrollment
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Enrolled Fingerprints Table -->
+    <div class="col-lg-7 col-xl-8">
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-white py-3">
+                <div class="row g-2 align-items-center justify-content-between">
+                    <div class="col-md-5">
+                        <h6 class="mb-0 fw-bold"><i class="bi bi-list-check me-2"></i> Enrolled Fingerprints (<span id="tableCount">{{ rows|length }}</span>)</h6>
+                    </div>
+                    <div class="col-md-7">
+                        <div class="d-flex gap-2">
+                            <select class="form-select form-select-sm" id="tableFilterDevice" onchange="filterEnrolledTable()">
+                                <option value="">All Devices</option>
+                                {% for c in cameras %}
+                                <option value="{{ c.name }}">{{ c.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="text" class="form-control form-control-sm" id="tableSearch" placeholder="Search USN/Name..." oninput="filterEnrolledTable()">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                {% if rows %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle" id="enrolledTable">
+                        <thead class="table-light text-muted small text-uppercase">
+                            <tr>
+                                <th>Device & Location</th>
+                                <th>Student USN</th>
+                                <th>Student Name</th>
+                                <th>Section</th>
+                                <th>Slot ID</th>
+                                <th>Status</th>
+                                <th>Enrolled At</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in rows %}
+                            <tr data-device="{{ r.camera_name }}" data-usn="{{ r.usn|lower }}" data-name="{{ r.student_name|lower }}" data-sec="{{ r.dept_code }}-{{ r.section_label }}">
+                                <td>
+                                    <div class="fw-semibold text-dark">{{ r.camera_name }}</div>
+                                    <small class="text-muted"><i class="bi bi-geo-alt"></i> {{ r.camera_location or 'Main Room' }}</small>
+                                </td>
+                                <td><code>{{ r.usn }}</code></td>
+                                <td>
+                                    <span class="fw-bold text-dark">{{ r.student_name }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-light text-dark border">{{ r.dept_code }}-{{ r.section_label if r.section_label else 'N/A' }}</span>
+                                </td>
+                                <td><span class="badge bg-primary">Slot #{{ r.template_id }}</span></td>
+                                <td>
+                                    {% if r.status == 'active' %}
+                                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+                                    {% else %}
+                                    <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25">Revoked</span>
+                                    {% endif %}
+                                </td>
+                                <td><small class="text-muted">{{ r.enrolled_at.strftime('%d %b %Y, %H:%M') if r.enrolled_at else '—' }}</small></td>
+                                <td class="text-end">
+                                    {% if r.status == 'active' %}
+                                    <button class="btn btn-sm btn-outline-danger"
+                                            data-rec-id="{{ r.id }}"
+                                            data-student-id="{{ r.student_id }}"
+                                            data-camera-id="{{ r.camera_id }}"
+                                            data-student-name="{{ r.student_name }}"
+                                            data-template-id="{{ r.template_id }}"
+                                            data-camera-name="{{ r.camera_name }}"
+                                            onclick="confirmDeleteEnrollment(this)"
+                                            title="Delete template from hardware sensor module and database">
+                                        <i class="bi bi-trash me-1"></i> Delete
+                                    </button>
+                                    {% else %}
+                                    <span class="text-muted small">—</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="p-5 text-center text-muted">
+                    <i class="bi bi-fingerprint display-3 text-secondary opacity-50"></i>
+                    <h6 class="mt-3 fw-bold">No Active Fingerprints Enrolled Yet</h6>
+                    <p class="small text-muted mb-0">Select a student and a registered recognition device on the left to link or enroll a fingerprint.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// --- Student Filtering Logic ---
+function filterSharedStudentsList() {
+    const deptId = document.getElementById('sharedFilterDept').value;
+    const sem = document.getElementById('sharedFilterSem').value;
+    const secId = document.getElementById('sharedFilterSec').value;
+    const search = document.getElementById('sharedSearchText').value.toLowerCase().trim();
+    const select = document.getElementById('sharedStudentId');
+
+    let visibleCount = 0;
+    for (let i = 1; i < select.options.length; i++) {
+        const opt = select.options[i];
+        const optDept = opt.getAttribute('data-dept');
+        const optSem = opt.getAttribute('data-sem');
+        const optSec = opt.getAttribute('data-sec');
+        const optUsn = opt.getAttribute('data-usn').toLowerCase();
+        const optName = opt.getAttribute('data-name').toLowerCase();
+
+        let match = true;
+        if (deptId && optDept !== deptId) match = false;
+        if (sem && optSem !== sem) match = false;
+        if (secId && optSec !== secId) match = false;
+        if (search && !optUsn.includes(search) && !optName.includes(search)) match = false;
+
+        opt.style.display = match ? '' : 'none';
+        if (match) visibleCount++;
+    }
+
+    if (select.selectedOptions.length > 0 && select.selectedOptions[0].style.display === 'none') {
+        select.value = '';
+        onSharedStudentSelected();
+    }
+}
+
+function resetSharedStudentFilters() {
+    document.getElementById('sharedFilterDept').value = '';
+    document.getElementById('sharedFilterSem').value = '';
+    document.getElementById('sharedFilterSec').value = '';
+    document.getElementById('sharedSearchText').value = '';
+    filterSharedStudentsList();
+}
+
+function onSharedStudentSelected() {
+    const select = document.getElementById('sharedStudentId');
+    const box = document.getElementById('sharedStudentDetailBox');
+    if (select.value && select.selectedIndex > 0) {
+        const opt = select.options[select.selectedIndex];
+        document.getElementById('sharedCardStudentName').innerText = opt.getAttribute('data-name');
+        document.getElementById('sharedCardStudentUsn').innerText = 'USN: ' + opt.getAttribute('data-usn');
+        document.getElementById('sharedCardStudentSec').innerText = opt.getAttribute('data-sec-label');
+        box.classList.remove('d-none');
+    } else {
+        box.classList.add('d-none');
+    }
+}
+
+// --- Device Slot Allocation Logic ---
+async function onSharedDeviceChanged() {
+    const cameraId = document.getElementById('sharedCameraId').value;
+    const badge = document.getElementById('liveSlotStatusBadge');
+    const liveInput = document.getElementById('liveTemplateId');
+    const hint = document.getElementById('sharedSlotHint');
+
+    if (!cameraId) {
+        badge.className = 'badge bg-secondary';
+        badge.innerText = 'Select Device';
+        liveInput.value = '';
+        return;
+    }
+
+    badge.className = 'badge bg-warning text-dark';
+    badge.innerText = 'Checking Slots...';
+
+    try {
+        const res = await fetch(`{{ url_for("fingerprints.device_slots_api", camera_id=0) }}`.replace('/0', `/${cameraId}`));
+        const data = await res.json();
+        if (data.success && data.slots) {
+            const s = data.slots;
+            liveInput.value = s.next_free_slot || '';
+            badge.className = 'badge bg-success';
+            badge.innerText = `Slot #${s.next_free_slot} Suggested`;
+            hint.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> ${s.used_count}/127 slots mapped. Next free: Slot #${s.next_free_slot}</span>`;
+        } else {
+            badge.className = 'badge bg-danger';
+            badge.innerText = 'Slot Query Error';
+        }
+    } catch (e) {
+        badge.className = 'badge bg-secondary';
+        badge.innerText = 'Manual Slot Input';
+    }
+}
+
+// --- Probe Sensor Last Scan Shortcut ---
+async function probeSensorLastScan() {
+    const cameraId = document.getElementById('sharedCameraId').value;
+    const probeText = document.getElementById('probeResultText');
+    const linkInput = document.getElementById('linkTemplateId');
+
+    if (!cameraId) {
+        alert('Please select a Target Recognition Device first.');
+        return;
+    }
+
+    probeText.innerHTML = '<span class="text-info"><i class="spinner-border spinner-border-sm"></i> Querying device /last-scan...</span>';
+
+    try {
+        const camSelect = document.getElementById('sharedCameraId');
+        const opt = camSelect.options[camSelect.selectedIndex];
+        let streamUrl = opt.getAttribute('data-ip') || '';
+        let host = streamUrl.replace('http://', '').replace('https://', '').replace('rtsp://', '').split(':')[0].split('/')[0];
+
+        if (!host) {
+            probeText.innerHTML = '<span class="text-danger">Invalid device IP.</span>';
+            return;
+        }
+
+        const res = await fetch(`http://${host}/last-scan`, { timeout: 3000 });
+        const data = await res.json();
+
+        if (data.matched && data.template_id) {
+            linkInput.value = data.template_id;
+            probeText.innerHTML = `<span class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> Detected Slot #${data.template_id} (Confidence: ${data.confidence || 'N/A'})!</span>`;
+        } else {
+            probeText.innerHTML = `<span class="text-warning"><i class="bi bi-exclamation-circle"></i> Sensor reachable, but no finger matched in last scan. (Raw: ${JSON.stringify(data)})</span>`;
+        }
+    } catch (err) {
+        probeText.innerHTML = `<span class="text-muted"><i class="bi bi-info-circle"></i> Could not auto-detect (${err.message}). Please manually type the Slot # (e.g. 1, 2, 3).</span>`;
+    }
+}
+
+// --- TAB 1: Link Existing Slot Submission ---
+document.getElementById('linkExistingForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const btn = document.getElementById('linkBtn');
+    const alertBox = document.getElementById('linkAlert');
+    const cameraId = document.getElementById('sharedCameraId').value;
+    const studentId = document.getElementById('sharedStudentId').value;
+    const templateId = document.getElementById('linkTemplateId').value;
+
+    if (!cameraId || !studentId || !templateId) {
+        alertBox.className = 'alert alert-danger';
+        alertBox.innerHTML = 'Please select a Device, Student, and enter Template Slot ID.';
+        alertBox.classList.remove('d-none');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Linking in Database...';
+    alertBox.classList.add('d-none');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    try {
+        const formData = new FormData();
+        formData.append('camera_id', cameraId);
+        formData.append('student_id', studentId);
+        formData.append('template_id', templateId);
+
+        const res = await fetch('{{ url_for("fingerprints.link_existing") }}', {
+            method: 'POST',
+            body: formData,
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        let data = {};
+        try {
+            data = await res.json();
+        } catch (e) {
+            data = { success: false, message: `Server error (HTTP ${res.status}).` };
+        }
+
+        if (res.ok && data.success) {
+            alertBox.className = 'alert alert-success border-success';
+            alertBox.innerHTML = `<strong><i class="bi bi-check-circle-fill me-1"></i> Success!</strong> ${data.message}`;
+            alertBox.classList.remove('d-none');
+            setTimeout(() => window.location.reload(), 1200);
+        } else {
+            alertBox.className = 'alert alert-danger border-danger';
+            alertBox.innerHTML = `<strong><i class="bi bi-exclamation-triangle-fill me-1"></i> Linking Failed:</strong> ${data.message || 'Unknown server error'}`;
+            alertBox.classList.remove('d-none');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-link-45deg me-1"></i> Link Slot to Student in Database';
+        }
+    } catch (err) {
+        clearTimeout(timeoutId);
+        alertBox.className = 'alert alert-danger border-danger';
+        if (err.name === 'AbortError') {
+            alertBox.innerHTML = `<strong><i class="bi bi-clock-history me-1"></i> Request Timed Out:</strong> Server did not respond within 8 seconds. Please check if Flask server is running.`;
+        } else {
+            alertBox.innerHTML = `<strong><i class="bi bi-wifi-off me-1"></i> Network Error:</strong> ${err.message}`;
+        }
+        alertBox.classList.remove('d-none');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-link-45deg me-1"></i> Link Slot to Student in Database';
+    } finally {
+        if (!alertBox.classList.contains('alert-success')) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-link-45deg me-1"></i> Link Slot to Student in Database';
+        }
+    }
+});
+
+// --- TAB 2: Live 2-Touch Enrollment Submission ---
+document.getElementById('liveEnrollForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const btn = document.getElementById('liveEnrollBtn');
+    const alertBox = document.getElementById('liveAlert');
+    const cameraId = document.getElementById('sharedCameraId').value;
+    const studentId = document.getElementById('sharedStudentId').value;
+    const templateId = document.getElementById('liveTemplateId').value;
+
+    if (!cameraId || !studentId || !templateId) {
+        alertBox.className = 'alert alert-danger';
+        alertBox.innerHTML = 'Please fill all required fields.';
+        alertBox.classList.remove('d-none');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Waiting for Sensor Touches (15s)...';
+    alertBox.className = 'alert alert-info border-info';
+    alertBox.innerHTML = '<strong><i class="bi bi-fingerprint"></i> Enrollment active on device.</strong><br>Please have student scan finger <strong>TWICE</strong> on the hardware sensor now...';
+    alertBox.classList.remove('d-none');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+    try {
+        const formData = new FormData();
+        formData.append('camera_id', cameraId);
+        formData.append('student_id', studentId);
+        formData.append('template_id', templateId);
+
+        const res = await fetch('{{ url_for("fingerprints.enroll") }}', {
+            method: 'POST',
+            body: formData,
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        let data = {};
+        try {
+            data = await res.json();
+        } catch (e) {
+            data = { success: false, message: `Server error (HTTP ${res.status}).` };
+        }
+
+        if (res.ok && data.success) {
+            alertBox.className = 'alert alert-success border-success';
+            alertBox.innerHTML = `<strong><i class="bi bi-check-circle-fill me-1"></i> Success!</strong> Registered in Slot #${data.template_id}.<br><small class="text-muted">${data.device_message || 'Template saved successfully.'}</small>`;
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            alertBox.className = 'alert alert-danger border-danger';
+            alertBox.innerHTML = `<strong><i class="bi bi-exclamation-triangle-fill me-1"></i> Enrollment Failed:</strong> ${data.message || 'Error occurred.'}`;
+            alertBox.classList.remove('d-none');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-fingerprint me-1"></i> Start Hardware 2-Touch Enrollment';
+        }
+    } catch (err) {
+        clearTimeout(timeoutId);
+        alertBox.className = 'alert alert-danger border-danger';
+        if (err.name === 'AbortError') {
+            alertBox.innerHTML = `<strong><i class="bi bi-clock-history me-1"></i> Timeout:</strong> Hardware sensor took longer than 20 seconds. Please try again.`;
+        } else {
+            alertBox.innerHTML = `<strong><i class="bi bi-wifi-off me-1"></i> Network Error:</strong> ${err.message}`;
+        }
+        alertBox.classList.remove('d-none');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-fingerprint me-1"></i> Start Hardware 2-Touch Enrollment';
+    } finally {
+        if (!alertBox.classList.contains('alert-success')) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-fingerprint me-1"></i> Start Hardware 2-Touch Enrollment';
+        }
+    }
+});
+
+// --- Delete Enrollment ---
+async function confirmDeleteEnrollment(btn, fpId, studentId, cameraId, name, slot, devName) {
+    if (typeof btn === 'object' && btn.getAttribute) {
+        fpId = btn.getAttribute('data-rec-id');
+        studentId = btn.getAttribute('data-student-id');
+        cameraId = btn.getAttribute('data-camera-id');
+        name = btn.getAttribute('data-student-name');
+        slot = btn.getAttribute('data-template-id');
+        devName = btn.getAttribute('data-camera-name');
+    }
+    if (!confirm(`Are you sure you want to delete the fingerprint for ${name} (Slot #${slot}) on ${devName}?\n\nThis will send a hardware command to clear the template from the sensor's flash memory.`)) {
+        return;
+    }
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    try {
+        const formData = new FormData();
+        formData.append('fingerprint_id', fpId);
+        formData.append('student_id', studentId);
+        formData.append('camera_id', cameraId);
+
+        const res = await fetch('{{ url_for("fingerprints.delete") }}', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            alert(`✅ ${data.message || 'Template deleted from sensor and database.'}`);
+            window.location.reload();
+        } else {
+            alert(`❌ Error: ${data.message}`);
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+        }
+    } catch (err) {
+        alert(`❌ Network Error: ${err.message}`);
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+    }
+}
+
+// --- Table Live Filter ---
+function filterEnrolledTable() {
+    const devFilter = document.getElementById('tableFilterDevice').value.toLowerCase().trim();
+    const search = document.getElementById('tableSearch').value.toLowerCase().trim();
+    const table = document.getElementById('enrolledTable');
+    if (!table) return;
+    const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+
+    let count = 0;
+    for (let r of rows) {
+        const dev = r.getAttribute('data-device').toLowerCase();
+        const usn = r.getAttribute('data-usn');
+        const name = r.getAttribute('data-name');
+        const sec = r.getAttribute('data-sec').toLowerCase();
+
+        let match = true;
+        if (devFilter && !dev.includes(devFilter)) match = false;
+        if (search && !usn.includes(search) && !name.includes(search) && !sec.includes(search)) match = false;
+
+        r.style.display = match ? '' : 'none';
+        if (match) count++;
+    }
+    const countBadge = document.getElementById('tableCount');
+    if (countBadge) countBadge.innerText = count;
+}
+</script>
+{% endblock %}

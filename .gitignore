@@ -1,0 +1,134 @@
+# ============================================
+# 🔒 SENSITIVE CREDENTIALS & KEYS (NEVER COMMIT)
+# ============================================
+.env
+.env.*
+!.env.example
+credentials.json
+google_credentials.json
+client_secret*.json
+*.pem
+*.key
+*.p12
+*.crt
+*.keystore
+!debug.keystore
+
+# ============================================
+# 📄 GENERATED DOCUMENTS & REPORTS (NEVER COMMIT)
+# ============================================
+*.docx
+*.pdf
+*.xlsx
+*.xls
+*.csv
+
+# ============================================
+# 📦 ARCHIVES, ZIPS & BACKUP COPIES (NEVER COMMIT)
+# ============================================
+*.zip
+*.tar
+*.gz
+*.7z
+*.rar
+*- Copy*
+* - Copy*
+*Copy*
+
+# ============================================
+# 🐍 PYTHON & BACKEND
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Backend Logs
+*.log
+attendance_system.log
+attendance_system_test/attendance_system.log
+
+# Private Datasets & Uploads (Student facial photos, OCR datasets & embeddings)
+dataset/
+images/
+embeddings/
+uploads/
+ocr_dataset/
+attendance_system_test/dataset/
+attendance_system_test/uploads/
+
+# Anti-Spoofing & ML Models (Large binaries & pretrained weights)
+anti_spoof_models/
+attendance_system_test/anti_spoof_models/
+*.onnx
+*.pth
+*.h5
+*.pb
+*.tflite
+
+# ============================================
+# 📱 REACT NATIVE & NODE.JS
+# ============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Metro & Bundles
+.metro-health-check*
+*.jsbundle
+
+# ============================================
+# 🍎 IOS / XCODE
+# ============================================
+ios/Pods/
+ios/build/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData/
+*.hmap
+*.ipa
+*.xcuserstate
+ios/.xcode.env.local
+
+# ============================================
+# 🤖 ANDROID / GRADLE
+# ============================================
+android/app/build/
+android/.gradle/
+android/build/
+android/local.properties
+
+# ============================================
+# 💻 IDE & OS SYSTEM FILES
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE Folders & Temp Logs
+.idea/
+.vscode/
+.vs/
+*.swp
+*.swo
+*.user
+*.userosv
+project-tree.txt

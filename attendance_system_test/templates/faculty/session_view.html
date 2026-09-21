@@ -1,0 +1,1302 @@
+{% extends "base.html" %}
+{% block title %}Session — {{ session.subject_code or 'View' }}{% endblock %}
+{% block page_title %}Session #{{ session.id }} — {{ session.subject_code or '' }} {{ session.subject_name or '' }}{% endblock %}
+
+{% block content %}
+<!-- Session Info Bar -->
+<div class="card shadow-sm mb-3">
+    <div class="card-body py-2">
+        <div class="row align-items-center small">
+            <div class="col-md-2"><strong>Date:</strong> {{ session.session_date }}</div>
+            <div class="col-md-2"><strong>Time:</strong> {{ session.start_time }} - {{ session.end_time }}</div>
+            <div class="col-md-2"><strong>Section:</strong> {{ session.dept_code }}-{{ session.section_label }}</div>
+            <div class="col-md-2"><strong>Room:</strong> {{ session.room or '—' }}</div>
+            <div class="col-md-2"><strong>Faculty:</strong> {{ session.faculty_name or '—' }}</div>
+            <div class="col-md-2">
+                <strong>Status:</strong>
+                <span class="badge {% if session.status == 'active' %}bg-success{% elif session.status == 'scheduled' %}bg-primary{% else %}bg-secondary{% endif %}">
+                    {{ session.status|title }}
+                </span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3">
+    <!-- Left: Attendance List -->
+    <div class="col-md-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h6 class="mb-0">
+                    <i class="bi bi-people"></i> Attendance
+                    <span class="badge bg-success ms-2" id="topBadgePresent">{{ present_count }}</span>
+                    <span class="badge bg-danger ms-1" id="topBadgeAbsent">{{ absent_count }}</span>
+                    <span class="text-muted small ms-2" id="topBadgeTotal">/ {{ total_count }}</span>
+                </h6>
+                <div class="d-flex align-items-center gap-1">
+                    <div class="btn-group btn-group-sm">
+                        <form method="POST" action="{{ url_for('session_view.mark_all_present', session_id=session.id) }}" class="d-inline"
+                              onsubmit="return handleBulkAction(event, this, 'present')">
+                            <button class="btn btn-outline-success btn-sm">
+                                <i class="bi bi-check-all"></i> All Present
+                            </button>
+                        </form>
+                        <form method="POST" action="{{ url_for('session_view.mark_all_absent', session_id=session.id) }}" class="d-inline"
+                              onsubmit="return handleBulkAction(event, this, 'absent')">
+                            <button class="btn btn-outline-danger btn-sm">
+                                <i class="bi bi-x-lg"></i> All Absent
+                            </button>
+                        </form>
+                    </div>
+                    <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#sheetUploadModal">
+                        <i class="bi bi-camera"></i> Upload Sheet
+                    </button>
+                    <button class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#classroomPhotoModal">
+                        <i class="bi bi-images"></i> Photo Recognition
+                    </button>
+                    <button class="btn btn-outline-warning btn-sm" data-bs-toggle="modal" data-bs-target="#shareSessionModal">
+                        <i class="bi bi-share"></i> Share Class
+                    </button>
+                    <button class="btn btn-sm text-white" style="background-color: #6f42c1;" data-bs-toggle="modal" data-bs-target="#voiceAttendanceModal" title="Voice Command Attendance">
+                        <i class="bi bi-mic-fill"></i> Voice Attendance
+                    </button>
+                </div>
+            </div>
+
+            <!-- Share Session Passcode Modal -->
+            <div class="modal fade" id="shareSessionModal" tabindex="-1">
+                <div class="modal-dialog modal-dialog-centered modal-sm">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h6 class="modal-title fw-bold">Share {{ session.subject_code }} Class</h6>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body text-center py-4">
+                            <p class="small text-muted mb-2">Give this 4-digit passcode to your covering faculty to share this session:</p>
+                            <div id="sessionProxyCodeDisplay" class="display-4 fw-bold text-primary tracking-wider my-3">
+                                {{ session.delegation_code if session.delegation_code else '----' }}
+                            </div>
+                            <button type="button" class="btn btn-primary btn-sm w-100" data-session-id="{{ session.id }}" onclick="genSessionProxyCode(this)">
+                                <i class="bi bi-arrow-repeat"></i> {{ 'Regenerate Passcode' if session.delegation_code else 'Generate Passcode' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <script>
+            function genSessionProxyCode(target) {
+                const sessionId = typeof target === 'object' ? target.getAttribute('data-session-id') : target;
+                fetch(`/faculty/session/${sessionId}/request-proxy`, {
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' }
+                })
+                .then(async res => {
+                    const contentType = res.headers.get("content-type");
+                    if (res.status === 401 || res.redirected || (contentType && contentType.includes("text/html"))) {
+                        alert('Session expired or login required. Redirecting to login page...');
+                        window.location.href = '/auth/login';
+                        return null;
+                    }
+                    if (!res.ok) {
+                        const errData = await res.json().catch(() => ({ message: `HTTP Error ${res.status}` }));
+                        throw new Error(errData.message || `HTTP ${res.status}`);
+                    }
+                    return res.json();
+                })
+                .then(data => {
+                    if (!data) return;
+                    if(data.success) {
+                        document.getElementById('sessionProxyCodeDisplay').innerText = data.code;
+                    } else {
+                        alert(data.message || 'Failed to generate passcode');
+                    }
+                })
+                .catch(err => {
+                    if (err) alert('Error generating proxy code: ' + err.message);
+                });
+            }
+            </script>
+
+            <div class="card-body p-0" id="attendanceContainer"
+                 data-stream-running="{{ '1' if stream_running else '0' }}"
+                 data-api-url="{{ url_for('session_view.attendance_data_api', session_id=session.id) }}">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle small" id="attendanceTable">
+                        <thead class="table-light">
+                            <tr>
+                                <th>#</th><th>USN</th><th>Name</th><th>Status</th>
+                                <th>Method</th><th>Score</th><th>Time</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for a in attendance %}
+                            <tr class="{% if a.status == 'present' %}table-success{% else %}table-danger{% endif %}" id="row-{{ a.student_id }}">
+                                <td>{{ loop.index }}</td>
+                                <td><code>{{ a.usn }}</code></td>
+                                <td>{{ a.full_name }}</td>
+                                <td>
+                                    {% if a.status == 'present' %}
+                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Present</span>
+                                    {% else %}
+                                    <span class="badge bg-danger"><i class="bi bi-x-circle"></i> Absent</span>
+                                    {% endif %}
+                                    {% if a.is_spoof_attempt %}
+                                    <span class="badge bg-warning"><i class="bi bi-shield-exclamation"></i> Spoof</span>
+                                    {% endif %}
+                                </td>
+                                <td><small class="text-muted">{{ a.method or '—' }}</small></td>
+                                <td>
+                                    {% if a.recognition_score %}<small>R:{{ '%.2f'|format(a.recognition_score) }}</small>{% endif %}
+                                    {% if a.liveness_score %}<small class="text-info">L:{{ '%.2f'|format(a.liveness_score) }}</small>{% endif %}
+                                </td>
+                                <td><small>{{ a.marked_at.strftime('%H:%M:%S') if a.marked_at else '—' }}</small></td>
+                                <td>
+                                    <form method="POST"
+                                          action="{{ url_for('session_view.toggle_attendance', session_id=session.id, student_id=a.student_id) }}"
+                                          class="d-inline"
+                                          onsubmit="return handleManualToggle(event, this)">
+                                        {% if a.status == 'present' %}
+                                        <button class="btn btn-sm btn-outline-danger" title="Mark Absent">
+                                            <i class="bi bi-x"></i>
+                                        </button>
+                                        {% else %}
+                                        <button class="btn btn-sm btn-outline-success" title="Mark Present">
+                                            <i class="bi bi-check"></i>
+                                        </button>
+                                        {% endif %}
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: Controls & Live Feed -->
+    <div class="col-md-4">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-white">
+                <h6 class="mb-0"><i class="bi bi-eye"></i> Live Recognition Stream</h6>
+            </div>
+            <div class="card-body">
+                {% if stream_running %}
+                {% set current_sess = session_data if session_data is defined and session_data else session %}
+                {% set sess_id = current_sess.id or (current_sess.get('id') if current_sess.get is defined else '') %}
+                {% set rec_mode = current_sess.recognition_mode or (current_sess.get('recognition_mode') if current_sess.get is defined else 'FACE_ONLY') %}
+
+                <div class="alert alert-success py-2 small mb-2 d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="bi bi-broadcast"></i> Attendance is <strong>LIVE</strong>
+                        <div class="badge bg-dark bg-opacity-75 ms-1">{{ rec_mode }}</div>
+                    </div>
+                </div>
+
+                {% if rec_mode in ['FACE_ONLY', 'DUAL_MODE'] %}
+                <!-- Live Video Streaming Window for Face Only & Dual Mode -->
+                <div class="mb-3 position-relative bg-black rounded overflow-hidden border">
+                    {% set stream_url = url_for('recognition.mjpeg_stream', session_id=sess_id) %}
+                    <img id="liveStreamImg"
+                         src="{{ stream_url }}"
+                         class="img-fluid w-100" 
+                         style="max-height:320px; object-fit:contain; display:block;"
+                         alt="Live Video Stream"
+                         onerror="handleStreamError(this, '{{ stream_url }}')">
+                    <div class="position-absolute top-0 start-0 m-2 px-2 py-1 bg-dark bg-opacity-75 text-white rounded small" style="font-size: 11px;">
+                        <i class="bi bi-camera-video-fill text-danger me-1"></i> Live Feed
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if rec_mode in ['FINGERPRINT_ONLY', 'DUAL_MODE'] %}
+                <!-- Fingerprint Sensor Info Board for Fingerprint Only & Dual Mode -->
+                <div class="text-center p-3 mb-3 bg-light rounded border border-success border-opacity-50">
+                    <div class="p-2 bg-success bg-opacity-10 text-success rounded-circle d-inline-block mb-2">
+                        <i class="bi bi-fingerprint display-6"></i>
+                    </div>
+                    <h6 class="fw-bold text-success mb-1">
+                        {% if rec_mode == 'DUAL_MODE' %}
+                            Dual Mode Sensor Active
+                        {% else %}
+                            Hardware Sensor Armed & Polling
+                        {% endif %}
+                    </h6>
+                    <p class="text-muted small mb-2" style="font-size:11px;">
+                        {% if rec_mode == 'DUAL_MODE' %}
+                            Touch fingerprint sensor first, then show face to camera within 10s.
+                        {% else %}
+                            Have students touch the optical sensor on the hardware unit.
+                        {% endif %}
+                    </p>
+                    <div id="liveBiometricLog" class="p-2 bg-white rounded border text-start small font-monospace text-muted" style="max-height:100px; overflow-y:auto; font-size:11px;">
+                        <span class="text-primary">● Polling hardware listener...</span>
+                    </div>
+                </div>
+                {% endif %}
+
+                <form method="POST" action="{{ url_for('session_view.faculty_stop_recognition', session_id=sess_id) }}">
+                    <button class="btn btn-danger w-100 py-2"><i class="bi bi-stop-fill"></i> Stop Recognition</button>
+                </form>
+                {% else %}
+                <p class="text-muted small">Start attendance for this session.</p>
+                <form method="POST"
+                        action="{{ url_for('session_view.faculty_start_recognition', session_id=session.id) }}"
+                        onsubmit="return startRecognitionAjax(event, this)">
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Attendance Mode</label>
+                        <select class="form-select form-select-sm" name="recognition_mode">
+                            <option value="FACE_ONLY" {{ 'selected' if session.recognition_mode == 'FACE_ONLY' else '' }}>Camera Face Recognition Only</option>
+                            <option value="FINGERPRINT_ONLY" {{ 'selected' if session.recognition_mode == 'FINGERPRINT_ONLY' else '' }}>Fingerprint Sensor Only</option>
+                            <option value="DUAL_MODE" {{ 'selected' if session.recognition_mode == 'DUAL_MODE' else '' }}>Dual Mode (Fingerprint + Face Verification)</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">Device Selection</label>
+                        <select class="form-select form-select-sm" name="camera_id" onchange="fillRtspFac(this)">
+                            <option value="">— Manual entry (URL or IP) —</option>
+                            {% for c in cameras %}
+                            <option value="{{ c.id }}" data-rtsp="{{ c.rtsp_url }}">{{ c.name }}{% if c.assigned_section_id %} - {{ c.dept_code }}-{{ c.section_label }}{% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <input type="text" class="form-control form-control-sm" name="rtsp_url" id="facRtsp"
+                               value="{{ session.rtsp_url or '' }}"
+                               placeholder="192.168.4.1 or rtsp:// stream URL">
+                        <div class="form-text small">Enter the device's IP address, or a full RTSP/HTTP/HTTPS stream URL.</div>
+                    </div>
+                    <button type="submit" class="btn btn-success w-100"><i class="bi bi-play-fill"></i> Start Attendance</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Voice Command Attendance Quick Card -->
+        <div class="card shadow-sm mb-3 border-start border-4" style="border-left-color: #6f42c1 !important;">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+                <h6 class="mb-0 fw-bold" style="color: #6f42c1;">
+                    <i class="bi bi-mic-fill me-1"></i> Voice Attendance
+                </h6>
+                <span class="badge" style="background-color: #6f42c1; font-size: 10px;">Hands-Free</span>
+            </div>
+            <div class="card-body p-3">
+                <p class="small text-muted mb-2">Take attendance by speaking student names, USNs, or roll numbers directly.</p>
+                <button type="button" class="btn w-100 text-white fw-semibold py-2 shadow-sm" style="background-color: #6f42c1;" data-bs-toggle="modal" data-bs-target="#voiceAttendanceModal">
+                    <i class="bi bi-mic-fill me-1"></i> Start Voice Attendance
+                </button>
+            </div>
+        </div>
+
+        {% if session.status in ['scheduled', 'active'] %}
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-x-circle"></i> Dismiss Class</h6></div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('session_view.dismiss_class', session_id=session.id) }}"
+                      onsubmit="return confirm('Dismiss this class?')">
+                    <div class="mb-2">
+                        <textarea class="form-control form-control-sm" name="reason" rows="2" placeholder="Reason (optional)..."></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-warning w-100"><i class="bi bi-x-circle"></i> Dismiss</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="card shadow-sm">
+            <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-pie-chart"></i> Summary</h6></div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-4"><h4 class="text-success fw-bold mb-0">{{ present_count }}</h4><small class="text-muted">Present</small></div>
+                    <div class="col-4"><h4 class="text-danger fw-bold mb-0">{{ absent_count }}</h4><small class="text-muted">Absent</small></div>
+                    <div class="col-4"><h4 class="fw-bold mb-0">{{ total_count }}</h4><small class="text-muted">Total</small></div>
+                </div>
+                {% set pct = ((present_count) / (total_count or 1) * 100)|round|int %}
+                <div class="progress mt-3" style="height:25px">
+                    <div class="progress-bar bg-success"
+                        style="--progress-width: {{ pct }}%; width: var(--progress-width);">
+                        {{ pct }}%
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-3">
+    <a href="{{ url_for('faculty.dashboard') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Dashboard
+    </a>
+</div>
+
+<!-- Sheet Upload Modal -->
+<div class="modal fade" id="sheetUploadModal" tabindex="-1" aria-labelledby="sheetUploadModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST"
+                  action="{{ url_for('session_view.upload_attendance_sheet', session_id=session.id) }}"
+                  enctype="multipart/form-data">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="sheetUploadModalLabel"><i class="bi bi-camera"></i> Upload Attendance Sheet</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Sheet Image</label>
+                        <input type="file" name="sheet_image" class="form-control" accept=".jpg,.jpeg,.png,.webp" required onchange="previewSheetImage(this)">
+                        <div class="form-text">Accepted: JPG, PNG, WEBP.</div>
+                    </div>
+                    <div id="sheetPreviewContainer" class="text-center d-none">
+                        <img id="sheetPreviewImg" src="" alt="Preview" class="img-fluid rounded border" style="max-height: 220px;">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-upload"></i> Upload & Extract</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Classroom Photo Recognition Modal -->
+<div class="modal fade" id="classroomPhotoModal" tabindex="-1" aria-labelledby="classroomPhotoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST"
+                  action="{{ url_for('session_view.upload_classroom_photo', session_id=session.id) }}"
+                  enctype="multipart/form-data">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="classroomPhotoModalLabel"><i class="bi bi-images"></i> Classroom Photo Recognition</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Classroom Photo(s)</label>
+                        <input type="file" name="classroom_photos" class="form-control" accept=".jpg,.jpeg,.png,.webp" multiple required onchange="previewClassroomPhotos(this)">
+                    </div>
+                    <div id="classroomPreviewContainer" class="d-flex flex-wrap gap-2"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-upload"></i> Upload & Recognize</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Voice Command Attendance Modal -->
+<div class="modal fade" id="voiceAttendanceModal" tabindex="-1" aria-labelledby="voiceAttendanceModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header text-white" style="background-color: #6f42c1;">
+                <h5 class="modal-title fw-bold" id="voiceAttendanceModalLabel">
+                    <i class="bi bi-mic-fill me-2"></i> Voice Command Attendance
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" onclick="resetVoiceModal()"></button>
+            </div>
+            <div class="modal-body p-4">
+                <!-- Mode Selector -->
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-muted mb-1">How do you want to take attendance?</label>
+                    <div class="btn-group w-100" role="group" aria-label="Voice attendance mode">
+                        <input type="radio" class="btn-check" name="voiceModeRadio" id="modeBulkPresent" autocomplete="off" onchange="selectVoiceMode('bulk_present')">
+                        <label class="btn btn-outline-secondary btn-sm" for="modeBulkPresent" title="Everyone starts Absent. Read out only the students who ARE present.">
+                            <i class="bi bi-people"></i> Default Absent<br><small>read the present ones</small>
+                        </label>
+
+                        <input type="radio" class="btn-check" name="voiceModeRadio" id="modeBulkAbsent" autocomplete="off" onchange="selectVoiceMode('bulk_absent')">
+                        <label class="btn btn-outline-secondary btn-sm" for="modeBulkAbsent" title="Everyone starts Present. Read out only the students who ARE absent.">
+                            <i class="bi bi-people-fill"></i> Default Present<br><small>read the absent ones</small>
+                        </label>
+
+                        <input type="radio" class="btn-check" name="voiceModeRadio" id="modeNameStatus" autocomplete="off" checked onchange="selectVoiceMode('name_status')">
+                        <label class="btn btn-outline-secondary btn-sm" for="modeNameStatus" title='Say the name/USN followed by "present" or "absent" for each student.'>
+                            <i class="bi bi-mic"></i> Name + Status<br><small>say name then status</small>
+                        </label>
+                    </div>
+                    <div id="voiceModeHint" class="form-text small mt-1">
+                        <i class="bi bi-info-circle me-1"></i> Say a name, USN, or roll number followed by <strong>"present"</strong> or <strong>"absent"</strong> — e.g. <em>"Gagan Gowda present"</em>.
+                    </div>
+                </div>
+                <!-- Listening & Speaking Visual Area -->
+                <div class="text-center mb-4">
+                    <div class="position-relative d-inline-block">
+                        <button type="button" id="voiceMicBtn" class="btn rounded-circle p-4 shadow text-white position-relative"
+                                style="width: 84px; height: 84px; background-color: #6f42c1; transition: all 0.3s;"
+                                onclick="toggleSpeechRecognition()">
+                            <i class="bi bi-mic-fill" style="font-size: 32px;" id="voiceMicIcon"></i>
+                        </button>
+                    </div>
+                    <div id="voiceStatusBadge" class="mt-2 fw-semibold text-muted small">
+                        Click microphone to speak
+                    </div>
+                </div>
+
+                <!-- Spoken Transcript / Text input with search button -->
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-muted mb-1">Spoken / Recognized Command:</label>
+                    <div class="input-group">
+                        <input type="text" id="voiceTranscriptInput" class="form-control" 
+                               placeholder="e.g. Mark Gagan Gowda present, Mark USN 1BM22CS001 present"
+                               onkeydown="if(event.key==='Enter'){event.preventDefault(); submitVoiceSearch();}">
+                        <button class="btn text-white" style="background-color: #6f42c1;" type="button" id="voiceSearchBtn" onclick="submitVoiceSearch()">
+                            <i class="bi bi-search"></i> Match
+                        </button>
+                    </div>
+                    <div class="form-text small">
+                        <i class="bi bi-info-circle me-1"></i> Quick Test Chips (Click to test):<br>
+                        <div class="d-flex flex-wrap gap-1 mt-1">
+                            <span class="badge bg-success bg-opacity-10 text-success border me-1" style="cursor:pointer;" onclick="quickFillVoice('user1, Deepti, Rakshita, Abhiram')">⚡ Read 4 Students Continuously</span>
+                            <span class="badge bg-light text-dark border me-1" style="cursor:pointer;" onclick="quickFillVoice('Mark Gagan Gowda present')">Mark Gagan Gowda present</span>
+                            <span class="badge bg-light text-dark border me-1" style="cursor:pointer;" onclick="quickFillVoice('Mark USN 1BM22CS001 present')">Mark USN 1BM22CS001 present</span>
+                            <span class="badge bg-light text-dark border" style="cursor:pointer;" onclick="quickFillVoice('user one present')">user one present</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Alert / Feedback Area -->
+                <div id="voiceFeedbackAlert" class="alert d-none small py-2 mb-3" role="alert"></div>
+
+                <!-- Result Container: Batch Multi-Student Summary -->
+                <div id="voiceBatchResultCard" class="card border-success border-2 bg-light d-none mb-3">
+                    <div class="card-body p-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="badge bg-success px-3 py-1 fw-bold fs-6">
+                                <i class="bi bi-check-all me-1"></i> <span id="voiceBatchCount">0</span> Students Marked Present
+                            </span>
+                            <span class="text-muted small font-monospace" id="voiceBatchTime"></span>
+                        </div>
+                        <p class="small text-muted mb-2">Students evaluated and marked in this batch:</p>
+                        <div id="voiceBatchMarkedList" class="p-2 bg-white rounded border small" style="max-height: 180px; overflow-y: auto;"></div>
+                        <div id="voiceBatchUnmatchedNotice" class="mt-2 text-warning small d-none"></div>
+                    </div>
+                </div>
+
+                <!-- Result Container: Exact Match Confirmation -->
+                <div id="voiceConfirmCard" class="card border-success border-2 bg-light d-none mb-3">
+                    <div class="card-body p-3 text-center">
+                        <div class="badge bg-success mb-2 px-3 py-1"><i class="bi bi-check-circle me-1"></i> Single Match Found</div>
+                        <h5 class="fw-bold mb-1 text-dark" id="voiceMatchName">—</h5>
+                        <p class="mb-2 text-muted font-monospace small" id="voiceMatchUsn">—</p>
+                        <div id="voiceAlreadyMarkedNotice" class="alert alert-warning py-1 small d-none mb-2">
+                            <i class="bi bi-exclamation-triangle me-1"></i> Currently recorded as <span id="voiceCurrentStatus" class="fw-bold">Present</span>
+                        </div>
+                        <div id="voiceDetectedStatusNote" class="small text-muted mb-2 d-none"></div>
+                        <p class="small text-muted mb-3">Confirm to mark attendance in database:</p>
+                        <div class="d-flex gap-2 justify-content-center">
+                            <button type="button" class="btn btn-success fw-bold px-3" id="voiceConfirmPresentBtn" onclick="confirmVoiceAttendance('present')">
+                                <i class="bi bi-check-lg me-1"></i> Present
+                            </button>
+                            <button type="button" class="btn btn-danger fw-bold px-3" id="voiceConfirmAbsentBtn" onclick="confirmVoiceAttendance('absent')">
+                                <i class="bi bi-x-lg me-1"></i> Absent
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" onclick="cancelVoiceConfirmation()">
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Result Container: Multiple Matches (Disambiguation) -->
+                <div id="voiceMultipleCard" class="card border-warning bg-light d-none mb-3">
+                    <div class="card-header bg-warning bg-opacity-25 py-2">
+                        <span class="fw-bold text-dark small"><i class="bi bi-people-fill me-1"></i> Multiple Students Found — Select One:</span>
+                    </div>
+                    <div class="card-body p-2" style="max-height: 200px; overflow-y: auto;">
+                        <ul class="list-group list-group-flush small" id="voiceMultipleList"></ul>
+                    </div>
+                </div>
+
+                <!-- Recent Marks History inside Modal -->
+                <div id="voiceRecentMarks" class="d-none border-top pt-2 mt-2">
+                    <h6 class="small fw-bold text-muted mb-2"><i class="bi bi-clock-history me-1"></i> Marked in this session via voice:</h6>
+                    <div id="voiceRecentMarksList" class="small"></div>
+                </div>
+            </div>
+            <div class="modal-footer bg-light py-2">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal" onclick="resetVoiceModal()">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function fillRtspFac(select) {
+    const opt = select.options[select.selectedIndex];
+    document.getElementById('facRtsp').value = opt.getAttribute('data-rtsp') || '';
+}
+
+function validateStartRecognition(form) {
+    const mode = form.querySelector('select[name="recognition_mode"]').value;
+    const cameraId = form.querySelector('select[name="camera_id"]').value;
+    if ((mode === 'FINGERPRINT_ONLY' || mode === 'DUAL_MODE') && !cameraId) {
+        alert('Fingerprint modes need the device picked from "Device Selection".');
+        return false;
+    }
+    return true;
+}
+
+function startRecognitionAjax(event, form) {
+    event.preventDefault();
+    if (!validateStartRecognition(form)) return false;
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Starting...';
+    fetch(form.action, {
+        method: 'POST',
+        body: new FormData(form),
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(r => r.json())
+    .then(() => { location.reload(); })
+    .catch(() => { location.reload(); });
+    return false;
+}
+
+function previewSheetImage(input) {
+    const container = document.getElementById('sheetPreviewContainer');
+    const img = document.getElementById('sheetPreviewImg');
+    if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(e) { img.src = e.target.result; container.classList.remove('d-none'); };
+        reader.readAsDataURL(input.files[0]);
+    } else { container.classList.add('d-none'); }
+}
+
+function previewClassroomPhotos(input) {
+    const container = document.getElementById('classroomPreviewContainer');
+    container.innerHTML = '';
+    if (!input.files) return;
+    Array.from(input.files).slice(0, 3).forEach(file => {
+        const reader = new FileReader();
+        reader.onload = e => {
+            const img = document.createElement('img');
+            img.src = e.target.result;
+            img.className = 'rounded border';
+            img.style.maxHeight = '120px';
+            img.style.maxWidth = '120px';
+            container.appendChild(img);
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+function handleManualToggle(event, form) {
+    event.preventDefault();
+    const btn = form.querySelector('button');
+    if (btn) btn.disabled = true;
+
+    fetch(form.action, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (btn) btn.disabled = false;
+        if (data.success) {
+            const studentId = data.student_id;
+            const newStatus = data.new_status;
+            const row = document.getElementById('row-' + studentId);
+            if (row) {
+                const isPres = (newStatus === 'present');
+                row.className = isPres ? 'table-success' : 'table-danger';
+                const cells = row.getElementsByTagName('td');
+                if (cells.length >= 8) {
+                    cells[3].innerHTML = isPres 
+                        ? '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Present</span>'
+                        : '<span class="badge bg-danger"><i class="bi bi-x-circle"></i> Absent</span>';
+                    cells[4].innerHTML = '<small class="text-muted">manual_individual</small>';
+                    cells[6].innerHTML = `<small>${new Date().toLocaleTimeString('en-GB')}</small>`;
+                }
+                form.innerHTML = isPres
+                    ? '<button class="btn btn-sm btn-outline-danger" title="Mark Absent"><i class="bi bi-x"></i></button>'
+                    : '<button class="btn btn-sm btn-outline-success" title="Mark Present"><i class="bi bi-check"></i></button>';
+
+                const tbody = row.parentElement;
+                if (tbody) {
+                    if (isPres) {
+                        tbody.insertBefore(row, tbody.firstChild);
+                    } else {
+                        const presentRows = tbody.querySelectorAll('tr.table-success');
+                        if (presentRows.length > 0) {
+                            const lastPresent = presentRows[presentRows.length - 1];
+                            if (lastPresent && lastPresent !== row) {
+                                if (lastPresent.nextSibling) {
+                                    tbody.insertBefore(row, lastPresent.nextSibling);
+                                } else {
+                                    tbody.appendChild(row);
+                                }
+                            }
+                        }
+                    }
+                    Array.from(tbody.querySelectorAll('tr')).forEach((r, idx) => {
+                        const firstCell = r.getElementsByTagName('td')[0];
+                        if (firstCell) firstCell.textContent = idx + 1;
+                    });
+                }
+            }
+            triggerCountRefresh();
+        }
+    })
+    .catch(err => {
+        if (btn) btn.disabled = false;
+        console.error('Toggle error:', err);
+    });
+    return false;
+}
+
+function handleBulkAction(event, form, type) {
+    event.preventDefault();
+    if (!confirm('Mark ALL students ' + type.toUpperCase() + '?')) return false;
+
+    const btn = form.querySelector('button');
+    if (btn) btn.disabled = true;
+
+    fetch(form.action, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (btn) btn.disabled = false;
+        const rows = document.querySelectorAll('#attendanceTable tbody tr');
+        rows.forEach(row => {
+            const isPres = (type === 'present');
+            row.className = isPres ? 'table-success' : 'table-danger';
+            const cells = row.getElementsByTagName('td');
+            if (cells.length >= 8) {
+                cells[3].innerHTML = isPres 
+                    ? '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Present</span>'
+                    : '<span class="badge bg-danger"><i class="bi bi-x-circle"></i> Absent</span>';
+                cells[4].innerHTML = `<small class="text-muted">manual_bulk_${type}</small>`;
+                cells[6].innerHTML = `<small>${new Date().toLocaleTimeString('en-GB')}</small>`;
+            }
+            const toggleForm = cells[7].querySelector('form');
+            if (toggleForm) {
+                toggleForm.innerHTML = isPres
+                    ? '<button class="btn btn-sm btn-outline-danger" title="Mark Absent"><i class="bi bi-x"></i></button>'
+                    : '<button class="btn btn-sm btn-outline-success" title="Mark Present"><i class="bi bi-check"></i></button>';
+            }
+        });
+        triggerCountRefresh();
+    })
+    .catch(() => {
+        if (btn) btn.disabled = false;
+        window.location.reload();
+    });
+    return false;
+}
+
+function triggerCountRefresh() {
+    refreshAttendanceTableFromApi();
+}
+
+function refreshAttendanceTableFromApi() {
+    const container = document.getElementById('attendanceContainer');
+    if (!container) return;
+    const apiUrl = container.getAttribute('data-api-url');
+    if (!apiUrl) return;
+
+    fetch(apiUrl)
+        .then(r => r.json())
+        .then(data => {
+            const topPres = document.getElementById('topBadgePresent');
+            const topAbs = document.getElementById('topBadgeAbsent');
+            const topTotal = document.getElementById('topBadgeTotal');
+            if (topPres) topPres.textContent = data.present;
+            if (topAbs) topAbs.textContent = data.absent;
+            if (topTotal) topTotal.textContent = '/ ' + data.total;
+
+            const presEl = document.querySelector('.text-success.fw-bold.mb-0');
+            const absEl = document.querySelector('.text-danger.fw-bold.mb-0');
+            if (presEl) presEl.textContent = data.present;
+            if (absEl) absEl.textContent = data.absent;
+            const progress = document.querySelector('.progress-bar.bg-success');
+            if (progress && data.total) {
+                const pct = Math.round((data.present / data.total) * 100);
+                progress.style.width = pct + '%';
+                progress.textContent = pct + '%';
+            }
+
+            if (data.attendance && data.attendance.length > 0) {
+                data.attendance.forEach((a, idx) => {
+                    const row = document.getElementById('row-' + a.student_id);
+                    if (row) {
+                        const isPres = (a.status === 'present');
+                        row.className = isPres ? 'table-success' : 'table-danger';
+                        const cells = row.getElementsByTagName('td');
+                        if (cells.length >= 8) {
+                            cells[0].textContent = idx + 1;
+                            cells[3].innerHTML = isPres 
+                                ? '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Present</span>'
+                                : '<span class="badge bg-danger"><i class="bi bi-x-circle"></i> Absent</span>';
+                            cells[4].innerHTML = a.method ? `<small class="text-muted">${a.method}</small>` : '<small class="text-muted">—</small>';
+                            if (a.recognition_score || a.liveness_score) {
+                                let scoreHtml = '';
+                                if (a.recognition_score) scoreHtml += `<small>R:${parseFloat(a.recognition_score).toFixed(2)}</small> `;
+                                if (a.liveness_score) scoreHtml += `<small class="text-info">L:${parseFloat(a.liveness_score).toFixed(2)}</small>`;
+                                cells[5].innerHTML = scoreHtml;
+                            }
+                            cells[6].innerHTML = `<small>${a.marked_at || '—'}</small>`;
+                            const toggleForm = cells[7].querySelector('form');
+                            if (toggleForm) {
+                                toggleForm.innerHTML = isPres
+                                    ? '<button class="btn btn-sm btn-outline-danger" title="Mark Absent"><i class="bi bi-x"></i></button>'
+                                    : '<button class="btn btn-sm btn-outline-success" title="Mark Present"><i class="bi bi-check"></i></button>';
+                            }
+                        }
+                    }
+                });
+            }
+        })
+        .catch(() => {});
+}
+
+function handleStreamError(img, streamUrl) {
+    if (!img.dataset.retries) img.dataset.retries = 0;
+    let retries = parseInt(img.dataset.retries);
+    if (retries < 15) {
+        img.dataset.retries = retries + 1;
+        setTimeout(() => {
+            img.src = streamUrl + '?retry=' + Date.now();
+        }, 1500);
+    }
+}
+
+(function() {
+    const container = document.getElementById('attendanceContainer');
+    if (!container || container.getAttribute('data-stream-running') !== '1') return;
+    const apiUrl = container.getAttribute('data-api-url');
+    if (!apiUrl) return;
+
+    setInterval(function() {
+        fetch(apiUrl)
+            .then(r => r.json())
+            .then(data => {
+                const presEl = document.querySelector('.text-success.fw-bold.mb-0');
+                const absEl = document.querySelector('.text-danger.fw-bold.mb-0');
+                if (presEl) presEl.textContent = data.present;
+                if (absEl) absEl.textContent = data.absent;
+
+                if (data.attendance && data.attendance.length > 0) {
+                    const tbody = document.querySelector('#attendanceTable tbody');
+                    data.attendance.forEach((a, idx) => {
+                        const row = document.getElementById('row-' + a.student_id);
+                        if (row) {
+                            const isPres = (a.status === 'present');
+                            row.className = isPres ? 'table-success' : 'table-danger';
+                            const cells = row.getElementsByTagName('td');
+                            if (cells.length >= 8) {
+                                cells[0].textContent = idx + 1;
+                                cells[3].innerHTML = isPres 
+                                    ? '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Present</span>'
+                                    : '<span class="badge bg-danger"><i class="bi bi-x-circle"></i> Absent</span>';
+                                cells[4].innerHTML = a.method ? `<small class="text-muted">${a.method}</small>` : '<small class="text-muted">—</small>';
+                                if (a.recognition_score || a.liveness_score) {
+                                    let scoreHtml = '';
+                                    if (a.recognition_score) scoreHtml += `<small>R:${parseFloat(a.recognition_score).toFixed(2)}</small> `;
+                                    if (a.liveness_score) scoreHtml += `<small class="text-info">L:${parseFloat(a.liveness_score).toFixed(2)}</small>`;
+                                    cells[5].innerHTML = scoreHtml;
+                                }
+                                cells[6].innerHTML = `<small>${a.marked_at || '—'}</small>`;
+                                const toggleForm = cells[7].querySelector('form');
+                                if (toggleForm) {
+                                    toggleForm.innerHTML = isPres
+                                        ? '<button class="btn btn-sm btn-outline-danger" title="Mark Absent"><i class="bi bi-x"></i></button>'
+                                        : '<button class="btn btn-sm btn-outline-success" title="Mark Present"><i class="bi bi-check"></i></button>';
+                                }
+                            }
+                            if (tbody) {
+                                tbody.appendChild(row);
+                            }
+                        }
+                    });
+                }
+            })
+            .catch(() => {});
+    }, 1500);
+
+    // Poll live biometric log ticker for Fingerprint / Dual Mode
+    const logBox = document.getElementById('liveBiometricLog');
+    if (logBox) {
+        const logUrl = "{{ url_for('recognition.stream_log_api', session_id=session.id) }}";
+        setInterval(function() {
+            fetch(logUrl)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.log && data.log.length > 0) {
+                        let html = '';
+                        data.log.slice(-12).forEach(item => {
+                            const badge = item.type === 'present' ? 'text-success' : item.type === 'warning' ? 'text-warning' : 'text-info';
+                            html += `<div><span class="text-muted">[${item.time}]</span> <span class="${badge}">${item.message}</span></div>`;
+                        });
+                        logBox.innerHTML = html;
+                        logBox.scrollTop = logBox.scrollHeight;
+                    }
+                })
+                .catch(() => {});
+        }, 1500);
+    }
+})();
+
+// =============================================================================
+// VOICE ATTENDANCE JAVASCRIPT CONTROLLER
+// =============================================================================
+let voiceRecognition = null;
+let isListening = false;
+let currentVoiceCandidate = null;
+let currentVoiceMode = 'name_status';
+
+function selectVoiceMode(mode) {
+    currentVoiceMode = mode;
+    const hint = document.getElementById('voiceModeHint');
+    if (!hint) return;
+    if (mode === 'bulk_present') {
+        hint.innerHTML = '<i class="bi bi-info-circle me-1"></i> Read out only the students who are <strong>PRESENT</strong>. All others remain absent.';
+    } else if (mode === 'bulk_absent') {
+        hint.innerHTML = '<i class="bi bi-info-circle me-1"></i> Read out only the students who are <strong>ABSENT</strong>. All others will be marked present.';
+    } else {
+        hint.innerHTML = '<i class="bi bi-info-circle me-1"></i> Say a name/USN followed by <strong>"present"</strong> or <strong>"absent"</strong> — e.g. <em>"Deepti absent, Gagan Gowda present"</em>.';
+    }
+}
+
+const voiceSearchUrl = "{{ url_for('session_view.web_voice_search', session_id=session.id) }}";
+const voiceMarkUrl = "{{ url_for('session_view.web_voice_mark', session_id=session.id) }}";
+const voiceBatchMarkUrl = "{{ url_for('session_view.web_voice_batch_mark', session_id=session.id) }}";
+
+function initVoiceRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        return null;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-IN';
+
+    recognition.onstart = function() {
+        isListening = true;
+        updateVoiceMicUI(true);
+        setVoiceStatus('Listening continuously... Speak names or commands now', 'text-primary');
+    };
+
+    recognition.onresult = function(event) {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+                transcript += event.results[i][0].transcript + ' ';
+            }
+        }
+        if (transcript.trim()) {
+            const input = document.getElementById('voiceTranscriptInput');
+            const prev = input ? input.value : '';
+            const newTrans = (prev ? prev + ' ' : '') + transcript.trim();
+            if (input) input.value = newTrans;
+            setVoiceStatus(`Heard: "${newTrans}"`, 'text-success');
+        }
+    };
+
+    recognition.onerror = function(event) {
+        isListening = false;
+        updateVoiceMicUI(false);
+        const err = event.error || 'unknown';
+        let msg = 'Speech error: ' + err;
+        let alertMsg = 'Microphone speech recognition encountered an error (' + err + '). You can type or click an example command in the box below and click Match.';
+
+        if (err === 'not-allowed' || err === 'service-not-allowed') {
+            msg = 'Microphone permission denied / HTTP blocked.';
+            alertMsg = '<strong>Microphone permission denied or blocked by browser.</strong> Please grant microphone permission in your browser address bar, or use localhost, or type/click your voice command below and click <strong>Match</strong>.';
+        } else if (err === 'no-speech') {
+            msg = 'No speech detected.';
+            alertMsg = 'No speech was detected. Please speak clearly into your microphone or type/click your voice command below.';
+        } else if (err === 'network') {
+            msg = 'Speech network error (Brave Browser block).';
+            alertMsg = '<strong>Brave Browser detected / Network error:</strong> Brave Browser blocks Google Speech Recognition servers by default. Please open <code>http://localhost:5000</code> in <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong> for live microphone speech recognition, or click an example command below.';
+        } else if (err === 'audio-capture') {
+            msg = 'No microphone device found.';
+            alertMsg = 'No microphone hardware was detected on this computer. You can type or click an example command below and click <strong>Match</strong>.';
+        }
+
+        setVoiceStatus(msg, 'text-danger');
+        showVoiceAlert(alertMsg, 'warning');
+    };
+
+    recognition.onend = function() {
+        isListening = false;
+        updateVoiceMicUI(false);
+        const input = document.getElementById('voiceTranscriptInput');
+        if (input && input.value.trim()) {
+            submitVoiceSearch(input.value.trim());
+        }
+    };
+
+    return recognition;
+}
+
+function quickFillVoice(text) {
+    const input = document.getElementById('voiceTranscriptInput');
+    if (input) input.value = text;
+    submitVoiceSearch(text);
+}
+
+function toggleSpeechRecognition() {
+    if (!voiceRecognition) {
+        voiceRecognition = initVoiceRecognition();
+    }
+    if (!voiceRecognition) {
+        showVoiceAlert('Web Speech API is not supported in this browser. You can type or click an example command directly in the input box below and click <strong>Match</strong>.', 'warning');
+        setVoiceStatus('Browser speech API unsupported — type command below', 'text-warning');
+        return;
+    }
+
+    if (isListening) {
+        try { voiceRecognition.stop(); } catch(e) {}
+        isListening = false;
+        updateVoiceMicUI(false);
+    } else {
+        try {
+            hideVoiceAlert();
+            cancelVoiceConfirmation();
+            voiceRecognition.start();
+        } catch (err) {
+            console.warn('Voice start exception:', err);
+            isListening = false;
+            updateVoiceMicUI(false);
+            showVoiceAlert('Could not start microphone: ' + (err.message || err) + '. You can type command in the box below.', 'warning');
+        }
+    }
+}
+
+function updateVoiceMicUI(listening) {
+    const btn = document.getElementById('voiceMicBtn');
+    const icon = document.getElementById('voiceMicIcon');
+    if (!btn || !icon) return;
+    if (listening) {
+        btn.classList.add('bg-danger');
+        btn.style.backgroundColor = '#dc3545';
+        icon.className = 'bi bi-mic-fill text-white';
+    } else {
+        btn.classList.remove('bg-danger');
+        btn.style.backgroundColor = '#6f42c1';
+        icon.className = 'bi bi-mic-fill text-white';
+    }
+}
+
+function setVoiceStatus(text, colorClass) {
+    const el = document.getElementById('voiceStatusBadge');
+    if (el) {
+        el.className = 'mt-2 fw-semibold small ' + (colorClass || 'text-muted');
+        el.textContent = text;
+    }
+}
+
+function showVoiceAlert(msg, type) {
+    const el = document.getElementById('voiceFeedbackAlert');
+    if (el) {
+        el.className = `alert alert-${type || 'info'} small py-2 mb-3`;
+        el.innerHTML = msg;
+        el.classList.remove('d-none');
+    }
+}
+
+function hideVoiceAlert() {
+    const el = document.getElementById('voiceFeedbackAlert');
+    if (el) el.classList.add('d-none');
+}
+
+function cancelVoiceConfirmation() {
+    currentVoiceCandidate = null;
+    const conf = document.getElementById('voiceConfirmCard');
+    const mult = document.getElementById('voiceMultipleCard');
+    const batchCard = document.getElementById('voiceBatchResultCard');
+    if (conf) conf.classList.add('d-none');
+    if (mult) mult.classList.add('d-none');
+    if (batchCard) batchCard.classList.add('d-none');
+}
+
+function resetVoiceModal() {
+    if (isListening && voiceRecognition) {
+        voiceRecognition.stop();
+    }
+    isListening = false;
+    updateVoiceMicUI(false);
+    setVoiceStatus('Click microphone to speak', 'text-muted');
+    hideVoiceAlert();
+    cancelVoiceConfirmation();
+    const input = document.getElementById('voiceTranscriptInput');
+    if (input) input.value = '';
+}
+
+function submitVoiceSearch(transcriptOverride) {
+    const input = document.getElementById('voiceTranscriptInput');
+    const transcript = (transcriptOverride || (input ? input.value : '') || '').trim();
+    if (!transcript) {
+        showVoiceAlert('Please speak or enter a voice command first (e.g., "Mark Gagan Gowda present").', 'warning');
+        return;
+    }
+
+    // Check if multi-student continuous transcript (contains commas, newlines, semicolons, or multiple student phrases)
+    if (transcript.includes(',') || transcript.includes(';') || transcript.includes('\n') || transcript.split(/\s+/).length >= 4) {
+        submitVoiceBatchMark(transcript);
+        return;
+    }
+
+    hideVoiceAlert();
+    cancelVoiceConfirmation();
+    const btn = document.getElementById('voiceSearchBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    }
+
+    fetch(voiceSearchUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({ transcript: transcript })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-search"></i> Match';
+        }
+
+        if (!data.success) {
+            showVoiceAlert(data.message || 'Error searching roster.', 'danger');
+            return;
+        }
+
+        if (data.status === 'not_found' || !data.matches || data.matches.length === 0) {
+            showVoiceAlert(`<strong>Student not found.</strong> No student in this section's roster matched <em>"${(data.parsed && data.parsed.value) ? data.parsed.value : transcript}"</em>. Please check the name or USN and try again.`, 'danger');
+            return;
+        }
+
+        if (data.status === 'exact' && data.matches.length === 1) {
+            displaySingleMatch(data.matches[0]);
+        } else {
+            displayMultipleMatches(data.matches);
+        }
+    })
+    .catch(err => {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-search"></i> Match';
+        }
+        showVoiceAlert('Network error while matching: ' + err.message, 'danger');
+    });
+}
+
+function submitVoiceBatchMark(transcript) {
+    hideVoiceAlert();
+    cancelVoiceConfirmation();
+    const btn = document.getElementById('voiceSearchBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Batch Marking...';
+    }
+
+    const defaultStatus = (currentVoiceMode === 'bulk_absent') ? 'absent' : 'present';
+
+    fetch(voiceBatchMarkUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+            transcript: transcript,
+            default_status: defaultStatus,
+            voice_mode: currentVoiceMode
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-search"></i> Match';
+        }
+
+        if (!data.success) {
+            showVoiceAlert(data.message || 'Error processing batch voice command.', 'danger');
+            return;
+        }
+
+        if (data.marked_count === 0) {
+            showVoiceAlert('<strong>No matching students found.</strong> Please check spelling or student names and try again.', 'warning');
+            return;
+        }
+
+        const batchCard = document.getElementById('voiceBatchResultCard');
+        const batchCount = document.getElementById('voiceBatchCount');
+        const batchTime = document.getElementById('voiceBatchTime');
+        const batchList = document.getElementById('voiceBatchMarkedList');
+
+        if (batchCount) batchCount.textContent = data.marked_count;
+        if (batchTime) batchTime.textContent = data.marked_at || new Date().toLocaleTimeString('en-GB');
+
+        if (batchList) {
+            let html = '';
+            data.marked.forEach(m => {
+                const isPres = (m.status === 'present');
+                const badgeClass = isPres ? 'bg-success' : 'bg-danger';
+                const textClass = isPres ? 'text-success' : 'text-danger';
+                const statusLabel = isPres ? 'Present' : 'Absent';
+                const iconSymbol = isPres ? '✓' : '✗';
+                html += `<div class="py-1 border-bottom d-flex justify-content-between ${textClass}"><span>${iconSymbol} <strong>${m.name}</strong> <code class="ms-1">(${m.usn})</code></span> <span class="badge ${badgeClass}">${statusLabel}</span></div>`;
+            });
+            batchList.innerHTML = html;
+        }
+
+        if (batchCard) batchCard.classList.remove('d-none');
+        showVoiceAlert(`<strong>Batch Success!</strong> ${data.marked_count} student(s) attendance updated via voice command (${currentVoiceMode}).`, 'success');
+        refreshAttendanceTableFromApi();
+    })
+    .catch(err => {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-search"></i> Match';
+        }
+        showVoiceAlert('Network error during batch mark: ' + err.message, 'danger');
+    });
+}
+
+function displaySingleMatch(student) {
+    currentVoiceCandidate = student;
+    const nameEl = document.getElementById('voiceMatchName');
+    const usnEl = document.getElementById('voiceMatchUsn');
+    if (nameEl) nameEl.textContent = student.name;
+    if (usnEl) usnEl.textContent = student.usn;
+
+    const notice = document.getElementById('voiceAlreadyMarkedNotice');
+    const statusText = document.getElementById('voiceCurrentStatus');
+    if (notice && statusText) {
+        if (student.current_status === 'present') {
+            statusText.textContent = 'Present';
+            notice.classList.remove('d-none');
+        } else {
+            notice.classList.add('d-none');
+        }
+    }
+
+    const conf = document.getElementById('voiceConfirmCard');
+    const mult = document.getElementById('voiceMultipleCard');
+    if (conf) conf.classList.remove('d-none');
+    if (mult) mult.classList.add('d-none');
+}
+
+function displayMultipleMatches(matches) {
+    const list = document.getElementById('voiceMultipleList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    matches.forEach(m => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item d-flex justify-content-between align-items-center px-2 py-2';
+        const isPres = m.current_status === 'present';
+        li.innerHTML = `
+            <div>
+                <strong>${m.name}</strong> 
+                <span class="text-muted font-monospace ms-1">(${m.usn})</span>
+                <div><span class="badge ${isPres ? 'bg-success' : 'bg-secondary'}" style="font-size: 10px;">${isPres ? 'Present' : 'Absent'}</span></div>
+            </div>
+            <button type="button" class="btn btn-sm text-white px-3" style="background-color: #6f42c1;" onclick='selectCandidateFromMultiple(${JSON.stringify(m).replace(/'/g, "&#39;")})'>
+                Select
+            </button>
+        `;
+        list.appendChild(li);
+    });
+
+    const conf = document.getElementById('voiceConfirmCard');
+    const mult = document.getElementById('voiceMultipleCard');
+    if (mult) mult.classList.remove('d-none');
+    if (conf) conf.classList.add('d-none');
+}
+
+function selectCandidateFromMultiple(student) {
+    displaySingleMatch(student);
+}
+
+function confirmVoiceAttendance() {
+    if (!currentVoiceCandidate) return;
+
+    const btn = document.getElementById('voiceConfirmBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Marking...';
+    }
+
+    fetch(voiceMarkUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+            student_id: currentVoiceCandidate.student_id,
+            status: 'present'
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-lg me-1"></i> Confirm & Mark Present';
+        }
+
+        if (!data.success) {
+            showVoiceAlert('Error marking attendance: ' + (data.message || 'Unknown'), 'danger');
+            return;
+        }
+
+        // Successfully marked!
+        showVoiceAlert(`<strong>Success!</strong> ${data.name} (<code>${data.usn}</code>) marked <strong>Present</strong> via voice command.`, 'success');
+        cancelVoiceConfirmation();
+        const input = document.getElementById('voiceTranscriptInput');
+        if (input) input.value = '';
+
+        // Update table row in UI directly
+        const row = document.getElementById('row-' + data.student_id);
+        if (row) {
+            row.className = 'table-success';
+            const cells = row.getElementsByTagName('td');
+            if (cells.length >= 8) {
+                cells[3].innerHTML = '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Present</span>';
+                cells[4].innerHTML = '<small class="badge text-white" style="background-color:#6f42c1;">voice_command</small>';
+                cells[6].innerHTML = `<small>${data.marked_at || new Date().toLocaleTimeString('en-GB')}</small>`;
+                const toggleForm = cells[7].querySelector('form');
+                if (toggleForm) {
+                    toggleForm.innerHTML = '<button class="btn btn-sm btn-outline-danger" title="Mark Absent"><i class="bi bi-x"></i></button>';
+                }
+            }
+        }
+
+        // Add to recent marks list in modal
+        const recentBox = document.getElementById('voiceRecentMarks');
+        const recentList = document.getElementById('voiceRecentMarksList');
+        if (recentBox && recentList) {
+            recentBox.classList.remove('d-none');
+            const item = document.createElement('div');
+            item.className = 'py-1 border-bottom d-flex justify-content-between text-success';
+            item.innerHTML = `<span>✓ ${data.name} (<code>${data.usn}</code>)</span> <span class="text-muted small">${data.marked_at}</span>`;
+            recentList.prepend(item);
+        }
+
+        // Refresh attendance counters on main screen
+        triggerCountRefresh();
+    })
+    .catch(err => {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-lg me-1"></i> Confirm & Mark Present';
+        }
+        showVoiceAlert('Network error: ' + err.message, 'danger');
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}Recognition Devices (Camera + Fingerprint){% endblock %}
+{% block page_title %}Recognition Devices: Hardware Nodes Management{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Top Information Banner -->
+    <div class="col-12">
+        <div class="bg-white p-3 rounded shadow-sm border d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div class="d-flex align-items-center gap-3">
+                <div class="p-3 bg-info bg-opacity-10 text-info rounded-circle">
+                    <i class="bi bi-cpu fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="mb-0 fw-bold">Dual Biometric Recognition Devices</h5>
+                    <small class="text-muted">Each registered ESP32 node provides both high-speed Video Face Recognition (Port 81) and Optical Fingerprint Sensing (Port 80).</small>
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{{ url_for('fingerprints.list_fingerprints') }}" class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-fingerprint me-1"></i> Open Fingerprint Hub
+                </a>
+                <a href="{{ url_for('recognition.recognition_panel') }}" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-eye me-1"></i> Live Stream Control
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Left: Device Table -->
+    <div class="col-lg-8">
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                <h6 class="mb-0 fw-bold"><i class="bi bi-hdd-network me-2"></i> Registered Devices ({{ cameras|length }})</h6>
+                <span class="badge bg-light text-dark border">{{ cameras|length }} Devices Online/Active</span>
+            </div>
+            <div class="card-body p-0">
+                {% if cameras %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light text-muted small text-uppercase">
+                            <tr>
+                                <th>Device Name</th>
+                                <th>Network Source</th>
+                                <th>Capabilities</th>
+                                <th>Assigned Section</th>
+                                <th>Status</th>
+                                <th>Last Tested</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for c in cameras %}
+                            <tr>
+                                <td>
+                                    <div class="fw-bold text-dark">{{ c.name }}</div>
+                                    <small class="text-muted"><i class="bi bi-geo-alt"></i> {{ c.location or 'Room / Lab' }}</small>
+                                </td>
+                                <td><code class="small">{{ c.rtsp_url }}</code></td>
+                                <td>
+                                    <div class="d-flex flex-column gap-1">
+                                        <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 small" style="width: fit-content;">
+                                            <i class="bi bi-camera-video"></i> Face :81
+                                        </span>
+                                        <span class="badge bg-info bg-opacity-10 text-dark border border-info border-opacity-25 small" style="width: fit-content;">
+                                            <i class="bi bi-fingerprint"></i> Sensor :80
+                                        </span>
+                                    </div>
+                                </td>
+                                <td>
+                                    {% if c.assigned_section_id %}
+                                      <span class="badge bg-light text-dark border">{{ c.dept_code }}-{{ c.section_label }}</span>
+                                    {% else %}
+                                      <span class="text-muted small">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if c.status == 'active' %}
+                                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">Active</span>
+                                    {% elif c.status == 'error' %}
+                                    <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25">Error</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25">Inactive</span>
+                                    {% endif %}
+                                </td>
+                                <td><small class="text-muted">{{ c.last_seen.strftime('%d %b, %H:%M') if c.last_seen else '—' }}</small></td>
+                                <td class="text-end">
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-success" data-cam-id="{{ c.id }}" onclick="testCamera(this)" title="Test both Camera Stream and Fingerprint Module reachability">
+                                            <i class="bi bi-wifi"></i> Test
+                                        </button>
+                                        <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editCam{{ c.id }}" title="Edit Device Details">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <form method="POST" action="{{ url_for('cameras.delete_camera', camera_id=c.id) }}" class="d-inline" onsubmit="return confirm('Delete this recognition device?')">
+                                            <button class="btn btn-outline-danger" title="Delete Device"><i class="bi bi-trash"></i></button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+
+                            <!-- Edit Modal -->
+                            <div class="modal fade" id="editCam{{ c.id }}" tabindex="-1">
+                                <div class="modal-dialog"><div class="modal-content">
+                                    <form method="POST" action="{{ url_for('cameras.edit_camera', camera_id=c.id) }}">
+                                        <div class="modal-header">
+                                            <h6 class="modal-title fw-bold">Edit Recognition Device — {{ c.name }}</h6>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="mb-3">
+                                                <label class="form-label fw-bold small text-muted text-uppercase">Device Name *</label>
+                                                <input type="text" class="form-control" name="name" value="{{ c.name }}" required>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label fw-bold small text-muted text-uppercase">Stream Source / IP Address *</label>
+                                                <input type="text" class="form-control" name="rtsp_url" value="{{ c.rtsp_url }}" required>
+                                                <div class="form-text small">Enter device IP address (e.g. <code>192.168.4.1</code>) or full RTSP/HTTP URL.</div>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label fw-bold small text-muted text-uppercase">Classroom Location / Room</label>
+                                                <input type="text" class="form-control" name="location" value="{{ c.location or '' }}" placeholder="e.g. Room 301, Seminar Hall">
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label fw-bold small text-muted text-uppercase">Default Assigned Section</label>
+                                                <select class="form-select" name="assigned_section_id">
+                                                    <option value="">— Not Assigned —</option>
+                                                     {% for sec in sections %}
+                                                     <option value="{{ sec.id }}" {% if c.assigned_section_id == sec.id %}selected{% endif %}>
+                                                         {{ sec.display_label if sec.display_label else sec.dept_code + ' — Sem ' + sec.sem_number|string + ' — Sec ' + sec.section_label }}
+                                                     </option>
+                                                     {% endfor %}
+                                                </select>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label fw-bold small text-muted text-uppercase">Notes & Setup Details</label>
+                                                <textarea class="form-control" name="notes" rows="2">{{ c.notes or '' }}</textarea>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                                        </div>
+                                    </form>
+                                </div></div>
+                            </div>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-hdd-network-off fs-1 text-secondary opacity-50"></i>
+                    <h6 class="mt-3 fw-bold">No Recognition Devices Registered</h6>
+                    <p class="small text-muted">Add your ESP32-CAM + Fingerprint hardware node using the form on the right.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: Add Device Panel -->
+    <div class="col-lg-4">
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-primary text-white py-3">
+                <h6 class="mb-0 fw-bold"><i class="bi bi-plus-circle-fill me-2"></i> Register Recognition Device</h6>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('cameras.add_camera') }}">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Device Name *</label>
+                        <input type="text" class="form-control" name="name" placeholder="e.g. ESP32 Station Room 301" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Stream Source / IP Address *</label>
+                        <input type="text" class="form-control" name="rtsp_url"
+                               placeholder="192.168.4.1  or  http://192.168.4.1:81/stream" required>
+                        <div class="form-text small">
+                            Just type the IP (e.g. <code>192.168.4.1</code>). The system auto-routes video stream to Port 81 and fingerprint control to Port 80.
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Classroom / Room Location</label>
+                        <input type="text" class="form-control" name="location" placeholder="e.g. Room 301, Lab B">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Default Assigned Section</label>
+                        <select class="form-select" name="assigned_section_id">
+                            <option value="">— Not Assigned —</option>
+                            {% for sec in sections %}
+                            <option value="{{ sec.id }}">{{ sec.dept_code }}-{{ sec.section_label }} (Sem {{ sec.sem_number }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Notes & Network Details</label>
+                        <textarea class="form-control" name="notes" rows="2" placeholder="Wi-Fi SSID, baud rate, sensor model..."></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold">
+                        <i class="bi bi-plus-lg me-1"></i> Register Device
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card shadow-sm border-0 mt-3 bg-light">
+            <div class="card-body small">
+                <h6 class="fw-bold text-dark"><i class="bi bi-info-circle-fill text-primary me-1"></i> Hardware Node Architecture</h6>
+                <p class="mb-1 text-muted"><strong>1. Combined Hardware:</strong> One ESP32-CAM module connected to an HLK-ZW101 optical sensor.</p>
+                <p class="mb-1 text-muted"><strong>2. Dual Services:</strong> Video streaming runs on Port 81; fingerprint control, scan queries, and enrollments run on Port 80.</p>
+                <p class="mb-0 text-muted"><strong>3. Templates Security:</strong> Fingerprint biometric templates remain securely stored inside the sensor's onboard flash memory.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function testCamera(btn) {
+    const camId = btn.getAttribute('data-cam-id');
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    fetch(`/admin/cameras/${camId}/test`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            alert(data.success ? '✅ ' + data.message : '❌ ' + data.message);
+            if (data.success) location.reload();
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            alert('Connection error: ' + err);
+        });
+}
+</script>
+{% endblock %}

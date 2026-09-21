@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Previous Sessions{% endblock %}
+{% block page_title %}Previous Sessions{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col">
+        <h4 class="fw-bold">Previous Sessions</h4>
+        <p class="text-muted mb-0">Open any past session to view or update that day's attendance.</p>
+    </div>
+</div>
+
+<form method="GET" class="row g-2 mb-3">
+    <div class="col-auto">
+        <input type="date" name="date" class="form-control" value="{{ date_filter }}">
+    </div>
+    <div class="col-auto">
+        <select name="section_id" class="form-select">
+            <option value="">All Sections</option>
+            {% for sec in filter_sections %}
+            <option value="{{ sec.id }}" {{ 'selected' if section_filter == sec.id }}>
+                {{ sec.dept_code }}-{{ sec.section_label }}
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary"><i class="bi bi-filter"></i> Filter</button>
+        <a href="{{ url_for('faculty.session_history') }}" class="btn btn-outline-secondary">Clear</a>
+    </div>
+</form>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+        {% if sessions %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Date</th><th>Time</th><th>Subject</th><th>Section</th>
+                        <th>Status</th><th>Attendance</th><th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in sessions %}
+                    <tr>
+                        <td>{{ s.session_date }}</td>
+                        <td>{{ s.start_time }} - {{ s.end_time }}</td>
+                        <td>
+                            <code class="fs-6">{{ s.subject_code or '—' }}</code>
+                            <br><small class="text-muted">{{ s.subject_name or '' }}</small>
+                        </td>
+                        <td><span class="badge bg-dark">{{ s.dept_code }}-{{ s.section_label }}</span></td>
+                        <td>
+                            {% if s.status == 'completed' %}
+                                <span class="badge bg-secondary">Completed</span>
+                            {% elif s.status == 'dismissed' %}
+                                <span class="badge bg-warning">Dismissed</span>
+                            {% else %}
+                                <span class="badge bg-dark">{{ s.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% set pct = ((s.present_count or 0) / (s.total_count or 1) * 100)|round|int %}
+                            <span class="text-success fw-bold">{{ s.present_count or 0 }}</span>/{{ s.total_count or 0 }}
+                            ({{ pct }}%)
+                        </td>
+                        <td>
+                            <a href="{{ url_for('session_view.view_session', session_id=s.id) }}" class="btn btn-sm btn-primary">
+                                <i class="bi bi-pencil-square"></i> View / Edit
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-calendar-x fs-1"></i>
+            <p class="mt-2">No previous sessions found for the selected filter.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

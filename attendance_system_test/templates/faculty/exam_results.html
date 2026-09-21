@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}Exam Results{% endblock %}
+{% block page_title %}Enter Exam Results{% endblock %}
+
+{% block content %}
+<style>
+.result-input-group {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    width: 100%;
+}
+.result-input-group .form-control {
+    min-width: 88px;
+    width: 100%;
+    height: 38px;
+}
+.result-input-suffix {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 42px;
+    height: 38px;
+    padding: 0 0.6rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    background: #f8f9fa;
+    color: #495057;
+    font-size: 0.85rem;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.result-final-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 72px;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid #cfe2ff;
+    border-radius: 999px;
+    background: #e7f1ff;
+    color: #0d3b66;
+    font-weight: 700;
+}
+</style>
+<script>
+function updateResultEntryRow(row) {
+    const subjectType = '{{ current_subject.subject_type or "Theory" }}';
+    const inputs = row.querySelectorAll('input[data-result-input]');
+    let values = [];
+    inputs.forEach(function (input) {
+        const value = parseFloat(input.value) || 0;
+        const max = parseFloat(input.dataset.max || '0');
+        const isOver = max > 0 && value > max;
+        input.classList.toggle('is-invalid', isOver);
+        input.classList.toggle('border-danger', isOver);
+        const suffix = input.closest('.result-input-group').querySelector('.result-input-suffix');
+        if (suffix) {
+            suffix.textContent = input.dataset.suffix || '';
+            suffix.classList.toggle('text-danger', isOver);
+            suffix.classList.toggle('border-danger', isOver);
+            suffix.classList.toggle('bg-danger-subtle', isOver);
+            suffix.classList.toggle('bg-light', !isOver);
+        }
+        values.push(Math.min(Math.max(value, 0), max || value));
+    });
+
+    if (subjectType === 'Lab') {
+        const labMarks = values[0] || 0;
+        const cieMarks = values[1] || 0;
+        const finalValue = (labMarks + cieMarks).toFixed(2);
+        row.querySelector('[data-final-value]').textContent = finalValue + '/50';
+        return;
+    }
+
+    if (subjectType === 'Theory-Lab-Integrated') {
+        const iaValues = values.slice(0, 3).sort((a, b) => b - a);
+        const bestTwo = iaValues[0] + iaValues[1];
+        const iaComponent = (bestTwo / 80) * 20;
+        const record = values[4] || 0;
+        const labTest = values[5] || 0;
+        const practicalComponent = ((record / 30) * 10) + ((labTest / 20) * 10);
+        const finalValue = (iaComponent + (values[3] || 0) + practicalComponent).toFixed(2);
+        row.querySelector('[data-final-value]').textContent = finalValue + '/50';
+        return;
+    }
+
+    const iaValues = values.slice(0, 3).sort((a, b) => b - a);
+    const bestTwo = iaValues[0] + iaValues[1];
+    const iaComponent = (bestTwo / 80) * 30;
+    const finalValue = (iaComponent + (values[3] || 0)).toFixed(2);
+    row.querySelector('[data-final-value]').textContent = finalValue + '/50';
+}
+
+window.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('tr[data-result-row]').forEach(function (row) {
+        row.querySelectorAll('input[data-result-input]').forEach(function (input) {
+            input.addEventListener('input', function () {
+                updateResultEntryRow(row);
+            });
+        });
+        updateResultEntryRow(row);
+    });
+});
+</script>
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">Subject</label>
+                <select name="subject_id" class="form-select" onchange="this.form.submit()">
+                    {% for item in assigned_subjects %}
+                    <option value="{{ item.subject_id }}" {{ 'selected' if item.subject_id == selected_subject_id }}>
+                        {{ item.subject_code }} - {{ item.subject_name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Section</label>
+                <select name="section_id" class="form-select" onchange="this.form.submit()">
+                    {% for item in assigned_subjects %}
+                    {% if item.subject_id == selected_subject_id %}
+                    <option value="{{ item.section_id }}" {{ 'selected' if item.section_id == selected_section_id }}>
+                        {{ item.section_label }}
+                    </option>
+                    {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Exam Name</label>
+                <input name="exam_name" class="form-control" value="{{ exam_name }}">
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if current_subject %}
+{% set entry_config = get_result_entry_config(current_subject.subject_type) %}
+<form method="post">
+    <input type="hidden" name="subject_id" value="{{ selected_subject_id }}">
+    <input type="hidden" name="section_id" value="{{ selected_section_id }}">
+    <div class="card shadow-sm">
+        <div class="card-header bg-white">
+            <h6 class="mb-0">{{ current_subject.code }} - {{ current_subject.name }} · {{ current_subject.subject_type or 'Theory' }}</h6>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>USN</th>
+                            <th>Student</th>
+                            {% if current_subject.subject_type == 'Lab' %}
+                            <th>Lab Marks</th>
+                            <th>CIE Marks</th>
+                            {% elif current_subject.subject_type == 'Theory-Lab-Integrated' %}
+                            <th>IA1</th>
+                            <th>IA2</th>
+                            <th>IA3</th>
+                            <th>CCA</th>
+                            <th>Record</th>
+                            <th>Lab Test</th>
+                            {% else %}
+                            <th>IA1</th>
+                            <th>IA2</th>
+                            <th>IA3</th>
+                            <th>CCA</th>
+                            {% endif %}
+                            <th>Final</th>
+                            <th>Remarks</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for student in students %}
+                        <tr data-result-row>
+                            <td>
+                                <input type="hidden" name="student_id" value="{{ student.student_id }}">
+                                {{ student.usn }}
+                            </td>
+                            <td>{{ student.full_name or '—' }}</td>
+                            {% if current_subject.subject_type == 'Lab' %}
+                            <td>
+                                <div class="result-input-group">
+                                    <input type="number" name="lab_marks_{{ student.student_id }}" class="form-control" min="0" max="20" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('lab_marks', 0) }}" data-result-input data-max="20" data-suffix="/20">
+                                    <span class="result-input-suffix">/20</span>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="result-input-group">
+                                    <input type="number" name="cie_marks_{{ student.student_id }}" class="form-control" min="0" max="30" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('cie_marks', 0) }}" data-result-input data-max="30" data-suffix="/30">
+                                    <span class="result-input-suffix">/30</span>
+                                </div>
+                            </td>
+                            {% elif current_subject.subject_type == 'Theory-Lab-Integrated' %}
+                            <td><div class="result-input-group"><input type="number" name="ia1_{{ student.student_id }}" class="form-control" min="0" max="40" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('ia1', 0) }}" data-result-input data-max="40" data-suffix="/40"><span class="result-input-suffix">/40</span></div></td>
+                            <td><div class="result-input-group"><input type="number" name="ia2_{{ student.student_id }}" class="form-control" min="0" max="40" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('ia2', 0) }}" data-result-input data-max="40" data-suffix="/40"><span class="result-input-suffix">/40</span></div></td>
+                            <td><div class="result-input-group"><input type="number" name="ia3_{{ student.student_id }}" class="form-control" min="0" max="40" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('ia3', 0) }}" data-result-input data-max="40" data-suffix="/40"><span class="result-input-suffix">/40</span></div></td>
+                            <td><div class="result-input-group"><input type="number" name="cca_{{ student.student_id }}" class="form-control" min="0" max="20" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('cca', 0) }}" data-result-input data-max="20" data-suffix="/20"><span class="result-input-suffix">/20</span></div></td>
+                            <td><div class="result-input-group"><input type="number" name="record_{{ student.student_id }}" class="form-control" min="0" max="30" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('record', 0) }}" data-result-input data-max="30" data-suffix="/30"><span class="result-input-suffix">/30</span></div></td>
+                            <td><div class="result-input-group"><input type="number" name="lab_test_{{ student.student_id }}" class="form-control" min="0" max="20" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('lab_test', 0) }}" data-result-input data-max="20" data-suffix="/20"><span class="result-input-suffix">/20</span></div></td>
+                            {% else %}
+                            <td><div class="result-input-group"><input type="number" name="ia1_{{ student.student_id }}" class="form-control" min="0" max="40" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('ia1', 0) }}" data-result-input data-max="40" data-suffix="/40"><span class="result-input-suffix">/40</span></div></td>
+                            <td><div class="result-input-group"><input type="number" name="ia2_{{ student.student_id }}" class="form-control" min="0" max="40" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('ia2', 0) }}" data-result-input data-max="40" data-suffix="/40"><span class="result-input-suffix">/40</span></div></td>
+                            <td><div class="result-input-group"><input type="number" name="ia3_{{ student.student_id }}" class="form-control" min="0" max="40" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('ia3', 0) }}" data-result-input data-max="40" data-suffix="/40"><span class="result-input-suffix">/40</span></div></td>
+                            <td><div class="result-input-group"><input type="number" name="cca_{{ student.student_id }}" class="form-control" min="0" max="20" step="0.1" value="{{ saved_results.get(student.student_id, {}).get('cca', 0) }}" data-result-input data-max="20" data-suffix="/20"><span class="result-input-suffix">/20</span></div></td>
+                            {% endif %}
+                            <td><span class="result-final-pill" data-final-value>0.00/50</span></td>
+                            <td>
+                                <input type="text" name="remarks_{{ student.student_id }}" class="form-control" placeholder="Optional" value="{{ saved_results.get(student.student_id, {}).get('remarks', '') }}">
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card-footer text-end">
+            <button type="submit" class="btn btn-primary">Save Results</button>
+        </div>
+    </div>
+</form>
+{% else %}
+<div class="alert alert-info">No assigned students found for the selected subject and section.</div>
+{% endif %}
+{% endblock %}

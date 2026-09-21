@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Cameras — Faculty View{% endblock %}
+{% block page_title %}Classroom Cameras{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="fw-bold mb-1"><i class="bi bi-camera-video text-primary"></i> Classroom Cameras</h4>
+        <p class="text-muted small mb-0">View active cameras and stream statuses assigned to your section classrooms.</p>
+    </div>
+</div>
+
+<div class="row g-3">
+    {% if cameras %}
+        {% for cam in cameras %}
+        <div class="col-md-6 col-lg-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h6 class="fw-bold mb-1">{{ cam.name }}</h6>
+                            <small class="text-muted"><i class="bi bi-geo-alt"></i> {{ cam.location or 'Classroom' }}</small>
+                        </div>
+                        <span class="badge bg-{{ 'success' if cam.status == 'active' else 'secondary' }}">
+                            {{ cam.status|title }}
+                        </span>
+                    </div>
+
+                    {% if cam.section_label %}
+                    <div class="mb-2">
+                        <span class="badge bg-dark">{{ cam.dept_code }}-{{ cam.section_label }}</span>
+                    </div>
+                    {% endif %}
+
+                    <div class="bg-light p-2 rounded small text-break mb-3 border">
+                        <code class="text-muted">{{ cam.rtsp_url or 'IP / RTSP URL not configured' }}</code>
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-muted small">
+                            <i class="bi bi-wifi"></i> Status: Active
+                        </span>
+                        <a href="{{ url_for('faculty.dashboard') }}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-play-circle"></i> Use in Class
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="col-12">
+            <div class="card border-0 shadow-sm p-4 text-center">
+                <i class="bi bi-camera-video-off fs-1 text-muted mb-2"></i>
+                <h6 class="fw-bold">No Active Cameras Configured</h6>
+                <p class="text-muted small mb-0">Contact administrator to assign cameras to your sections.</p>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

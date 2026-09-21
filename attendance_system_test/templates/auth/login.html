@@ -1,0 +1,429 @@
+{% extends "base.html" %}
+
+{% block title %}Login — AttendAI Smart Verification{% endblock %}
+
+{% block auth_content %}
+<style>
+/* ─────────────────────────────────────────────────────────────
+   ATTENDAI FUNNY & CYBER BIOMETRIC ANIMATED LOGIN STYLES
+   ───────────────────────────────────────────────────────────── */
+
+/* Override parent auth-wrapper to full dark cyber theme */
+.auth-wrapper {
+  background: #070b14 !important;
+  min-height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  overflow-x: hidden;
+  padding: 2rem 1rem;
+}
+
+/* Background Cyber Grid & Floating Particles */
+.cyber-bg {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.22), transparent 45%),
+    radial-gradient(circle at 80% 80%, rgba(236, 72, 153, 0.2), transparent 45%),
+    linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Floating Biometric Nodes */
+.bio-node {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.18);
+  box-shadow: 0 0 25px rgba(99, 102, 241, 0.35);
+  animation: floatNode 6s ease-in-out infinite alternate;
+}
+.bio-node-1 { width: 120px; height: 120px; top: 8%; left: 6%; animation-delay: 0s; }
+.bio-node-2 { width: 160px; height: 160px; bottom: 10%; right: 8%; animation-delay: 2s; }
+.bio-node-3 { width: 80px; height: 80px; top: 60%; left: 10%; animation-delay: 4s; }
+
+@keyframes floatNode {
+  0% { transform: translateY(0) scale(1); }
+  100% { transform: translateY(-25px) scale(1.1); }
+}
+
+/* Main Responsive Card Box */
+.login-card-container {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+/* Neon Glassmorphism Card */
+.neon-glass-card {
+  background: rgba(15, 23, 42, 0.88) !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 24px !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8),
+              0 0 35px rgba(99, 102, 241, 0.3) !important;
+}
+
+/* Face Recognition Scanner Widget */
+.face-scanner-widget {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  margin: 0 auto 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar-icon-box {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4f46e5, #ec4899);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.2rem;
+  color: #ffffff;
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.6);
+  transition: transform 0.3s ease, background 0.3s ease;
+}
+
+/* Scanning Reticle Frame */
+.scanner-frame {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  border-radius: 20px;
+  border: 2px dashed rgba(6, 182, 212, 0.6);
+  animation: rotateFrame 12s linear infinite;
+}
+
+@keyframes rotateFrame {
+  100% { transform: rotate(360deg); }
+}
+
+/* Laser Scanline Effect */
+.laser-line {
+  position: absolute;
+  left: 5%; width: 90%;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #06b6d4, #3b82f6, transparent);
+  box-shadow: 0 0 10px #06b6d4, 0 0 20px #06b6d4;
+  top: 10%;
+  animation: laserScan 2.5s ease-in-out infinite alternate;
+}
+
+@keyframes laserScan {
+  0% { top: 10%; opacity: 0.3; }
+  50% { opacity: 1; }
+  100% { top: 90%; opacity: 0.3; }
+}
+
+/* Reticle Corners */
+.corner {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-color: #06b6d4;
+  border-style: solid;
+}
+.corner-tl { top: 4px; left: 4px; border-width: 3px 0 0 3px; }
+.corner-tr { top: 4px; right: 4px; border-width: 3px 3px 0 0; }
+.corner-bl { bottom: 4px; left: 4px; border-width: 0 0 3px 3px; }
+.corner-br { bottom: 4px; right: 4px; border-width: 0 3px 3px 0; }
+
+/* Status Badge Pill */
+.scan-status-pill {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 4px 14px;
+  border-radius: 50px;
+  background: rgba(6, 182, 212, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  display: inline-block;
+  transition: all 0.3s ease;
+}
+
+/* Cyber Form Inputs */
+.cyber-input-group .form-control {
+  background: rgba(30, 41, 59, 0.8) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  color: #ffffff !important;
+  padding: 0.75rem 1rem !important;
+  border-radius: 12px !important;
+  font-size: 0.95rem !important;
+}
+.cyber-input-group .form-control:focus {
+  background: rgba(30, 41, 59, 1) !important;
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.5) !important;
+  color: #ffffff !important;
+}
+
+/* Glowing Submit Button */
+.btn-cyber-submit {
+  background: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%) !important;
+  border: none !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  padding: 0.85rem 1.5rem !important;
+  border-radius: 14px !important;
+  box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.5) !important;
+  transition: all 0.3s ease !important;
+}
+.btn-cyber-submit:hover {
+  transform: translateY(-2px) scale(1.01) !important;
+  box-shadow: 0 15px 30px -5px rgba(99, 102, 241, 0.7),
+              0 0 25px rgba(236, 72, 153, 0.5) !important;
+  color: #ffffff !important;
+}
+
+/* Role Cards Micro-animations */
+.role-card-mini {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 8px;
+  text-align: center;
+  transition: all 0.25s ease;
+  cursor: pointer;
+}
+.role-card-mini:hover {
+  background: rgba(99, 102, 241, 0.25);
+  border-color: rgba(99, 102, 241, 0.5);
+  transform: translateY(-3px);
+}
+
+/* Interactive Ticker Bar */
+.funny-ticker {
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.9);
+  border-radius: 12px;
+  padding: 8px 14px;
+  border-left: 3px solid #06b6d4;
+  transition: opacity 0.3s ease;
+}
+</style>
+
+<div class="cyber-bg">
+  <div class="bio-node bio-node-1"></div>
+  <div class="bio-node bio-node-2"></div>
+  <div class="bio-node bio-node-3"></div>
+</div>
+
+<div class="login-card-container">
+  <!-- Main Glass Card -->
+  <div class="card neon-glass-card border-0">
+    <div class="card-body p-4 p-sm-5">
+
+      <!-- Face & Fingerprint AI Scanner Mascot -->
+      <div class="text-center">
+        <div class="face-scanner-widget" id="scannerWidget">
+          <div class="scanner-frame"></div>
+          <div class="laser-line"></div>
+          <div class="corner corner-tl"></div>
+          <div class="corner corner-tr"></div>
+          <div class="corner corner-bl"></div>
+          <div class="corner corner-br"></div>
+          
+          <div class="avatar-icon-box" id="avatarBox">
+            <i class="bi bi-person-bounding-box" id="avatarIcon"></i>
+          </div>
+        </div>
+
+        <div class="mb-2">
+          <span class="scan-status-pill text-uppercase" id="statusPill">
+            <i class="bi bi-cpu me-1"></i> AI SCANNER READY
+          </span>
+        </div>
+
+        <h3 class="fw-bold mb-1 text-white">AttendAI</h3>
+        <p class="text-secondary small mb-4">
+          Smart Face & Fingerprint Attendance Portal
+        </p>
+      </div>
+
+      <!-- Login Form -->
+      <form method="POST" action="{{ url_for('auth.login', next=request.args.get('next', '')) }}">
+        
+        <!-- Email Input -->
+        <div class="mb-3 cyber-input-group">
+          <label for="email" class="form-label small text-uppercase fw-semibold text-secondary">
+            <i class="bi bi-envelope me-1 text-info"></i> User Identification
+          </label>
+          <input type="email"
+                 class="form-control"
+                 id="email"
+                 name="email"
+                 placeholder="user@bmsit.in"
+                 required
+                 autofocus
+                 onfocus="setScannerState('email')"
+                 onblur="resetScannerState()">
+        </div>
+
+        <!-- Password Input -->
+        <div class="mb-3 cyber-input-group">
+          <label for="password" class="form-label small text-uppercase fw-semibold text-secondary">
+            <i class="bi bi-shield-lock me-1" style="color:#ec4899"></i> Secret Password
+          </label>
+          <div class="input-group">
+            <input type="password"
+                   class="form-control"
+                   id="password"
+                   name="password"
+                   placeholder="••••••••"
+                   required
+                   onfocus="setScannerState('password')"
+                   onblur="resetScannerState()">
+            <button class="btn btn-outline-secondary border-secondary text-secondary"
+                    type="button"
+                    onclick="togglePassword('password', this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Action Button -->
+        <div class="d-grid mt-4">
+          <button type="submit" class="btn btn-cyber-submit btn-lg d-flex align-items-center justify-content-center gap-2">
+            <i class="bi bi-fingerprint fs-4"></i>
+            <span>Authenticate & Sign In</span>
+          </button>
+        </div>
+
+      </form>
+
+      <!-- Registration Link -->
+      <div class="text-center mt-4 pt-2 border-top border-secondary border-opacity-25">
+        <p class="small text-secondary mb-1">
+          New student need enrollment?
+          <a href="{{ url_for('auth.register') }}" class="text-info fw-bold text-decoration-none">
+            Register here <i class="bi bi-arrow-right-short"></i>
+          </a>
+        </p>
+      </div>
+
+      <!-- Role Quick Selector Info -->
+      <div class="row mt-3 g-2">
+        <div class="col-4">
+          <div class="role-card-mini" onclick="fillDemoRole('admin@bmsit.in')">
+            <i class="bi bi-shield-check text-success fs-5"></i>
+            <div class="small fw-semibold text-white mt-1" style="font-size:0.7rem">Admin</div>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="role-card-mini" onclick="fillDemoRole('faculty@bmsit.in')">
+            <i class="bi bi-person-workspace text-info fs-5"></i>
+            <div class="small fw-semibold text-white mt-1" style="font-size:0.7rem">Faculty</div>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="role-card-mini" onclick="fillDemoRole('student@bmsit.in')">
+            <i class="bi bi-mortarboard text-warning fs-5"></i>
+            <div class="small fw-semibold text-white mt-1" style="font-size:0.7rem">Student</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Funny Interactive Live Ticker
+      <div class="mt-4 funny-ticker d-flex align-items-center gap-2">
+        <i class="bi bi-robot text-info fs-5"></i>
+        <span id="funnyQuote">Scanning face... 100% human detected (no proxy allowed)!</span>
+      </div> -->
+
+    </div><!-- /card-body -->
+  </div><!-- /card -->
+</div>
+
+<script>
+// Toggle Password Visibility
+function togglePassword(inputId, btn) {
+    const input = document.getElementById(inputId);
+    const icon = btn.querySelector('i');
+
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.className = 'bi bi-eye-slash';
+        setScannerState('password_peek');
+    } else {
+        input.type = 'password';
+        icon.className = 'bi bi-eye';
+        setScannerState('password');
+    }
+}
+
+// Interactive Mascot State Handler
+const avatarIcon = document.getElementById('avatarIcon');
+const avatarBox  = document.getElementById('avatarBox');
+const statusPill = document.getElementById('statusPill');
+
+function setScannerState(state) {
+    if (state === 'email') {
+        avatarIcon.className = 'bi bi-person-fill-gear';
+        statusPill.className = 'scan-status-pill bg-info bg-opacity-25 text-info border-info';
+        statusPill.innerHTML = '<i class="bi bi-search me-1"></i> WHO ARE YOU ?';
+        avatarBox.style.transform = 'scale(1.08) rotate(3deg)';
+        avatarBox.style.background = 'linear-gradient(135deg, #06b6d4, #3b82f6)';
+    } else if (state === 'password') {
+        avatarIcon.className = 'bi bi-shield-lock-fill';
+        statusPill.className = 'scan-status-pill bg-danger bg-opacity-25 text-danger border-danger';
+        statusPill.innerHTML = '<i class="bi bi-eye-slash me-1"></i> STEALTH MODE ENABLED';
+        avatarBox.style.transform = 'scale(0.95) rotate(-5deg)';
+        avatarBox.style.background = 'linear-gradient(135deg, #1e293b, #ec4899)';
+    } else if (state === 'password_peek') {
+        avatarIcon.className = 'bi bi-emoji-wink-fill';
+        statusPill.className = 'scan-status-pill bg-warning bg-opacity-25 text-warning border-warning';
+        statusPill.innerHTML = '<i class="bi bi-eye me-1"></i> PASSWORD UNVEILED';
+        avatarBox.style.transform = 'scale(1.1) rotate(5deg)';
+    }
+}
+
+function resetScannerState() {
+    avatarIcon.className = 'bi bi-person-bounding-box';
+    statusPill.className = 'scan-status-pill text-info border-info';
+    statusPill.innerHTML = '<i class="bi bi-cpu me-1"></i> DO YOU HAVE PERMISSION ?';
+    avatarBox.style.transform = 'scale(1) rotate(0deg)';
+    avatarBox.style.background = 'linear-gradient(135deg, #4f46e5, #ec4899)';
+}
+
+function fillDemoRole(email) {
+    document.getElementById('email').value = email;
+    setScannerState('email');
+}
+
+// Funny Ticker Quotes
+const funnyQuotes = [
+    "Scanning face... 100% human detected (no proxy allowed)!",
+    "Searching for 8:00 AM class excuses... 0 found!",
+    "MobileFaceNet v1 ONNX model ready to log your presence.",
+    "Fingerprint sensor calibrated. Coffee levels remaining: 12%.",
+    "Fun fact: AI detects 99.8% of faces, even on Monday mornings!"
+];
+
+let quoteIndex = 0;
+setInterval(() => {
+    quoteIndex = (quoteIndex + 1) % funnyQuotes.length;
+    const ticker = document.getElementById('funnyQuote');
+    if (ticker) {
+        ticker.style.opacity = '0';
+        setTimeout(() => {
+            ticker.textContent = funnyQuotes[quoteIndex];
+            ticker.style.opacity = '1';
+        }, 300);
+    }
+}, 4500);
+</script>
+{% endblock %}

@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Subject Registration{% endblock %}
+{% block page_title %}Subject Registration{% endblock %}
+
+{% block content %}
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% else %}
+
+<div class="alert alert-info small d-flex align-items-center gap-2">
+  <i class="bi bi-info-circle fs-5"></i>
+  <div>
+    <strong>Academic Cycle: {{ period.name }}</strong><br>
+    Select your required elective courses below. You can select <strong>only one option per category</strong>.
+    Once registered, your choice is locked for the semester.
+  </div>
+</div>
+
+<!-- Professional Electives -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center">
+    <h6 class="mb-0 fw-bold text-primary">
+      <i class="bi bi-diagram-3 me-1"></i> Professional Elective (PE)
+    </h6>
+    {% if cluster %}
+      <span class="badge bg-dark"><i class="bi bi-geo-alt me-1"></i>Cluster: {{ cluster.cluster_name }}</span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if not cluster %}
+      <div class="text-center text-muted py-4">You are not assigned to an academic cluster yet.</div>
+    {% elif not professional %}
+      <div class="text-center text-muted py-4">No professional electives currently offered for your cluster this period.</div>
+    {% elif registered.professional_elective %}
+      <div class="alert alert-success d-flex align-items-center justify-content-between mb-0">
+        <div>
+          <i class="bi bi-check-circle-fill me-2 fs-5"></i>
+          <strong>Registered Choice:</strong> <code>{{ registered.professional_elective.code }}</code> — {{ registered.professional_elective.name }}
+        </div>
+        <span class="badge bg-success">Locked</span>
+      </div>
+    {% else %}
+      <form id="form-pe" onsubmit="submitFormRegistration(event, 'pe')">
+        <p class="small text-secondary mb-3">Select <strong>exactly one</strong> Professional Elective offered to your cluster:</p>
+        <div class="list-group mb-3">
+          {% for g in professional %}
+          <label class="list-group-item list-group-item-action d-flex align-items-center justify-content-between cursor-pointer p-3">
+            <div class="d-flex align-items-center gap-3">
+              <input class="form-check-input flex-shrink-0" type="radio" name="group_id" value="{{ g.group_id }}" required>
+              <div>
+                <div class="fw-bold"><code>{{ g.code }}</code> — {{ g.name }}</div>
+                <small class="text-muted">Faculty Capacity: {{ g.enrolled }}{% if g.max_capacity %} / {{ g.max_capacity }}{% endif %} seats filled</small>
+              </div>
+            </div>
+            <span class="badge bg-outline-primary">Choice Option</span>
+          </label>
+          {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-primary px-4 fw-semibold">
+          <i class="bi bi-check-lg me-1"></i> Confirm Professional Elective Choice
+        </button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Open Elective -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-white">
+    <h6 class="mb-0 fw-bold text-success">
+      <i class="bi bi-globe me-1"></i> Open Elective (OE) <small class="text-muted fs-6 fw-normal">(Cross-Departmental)</small>
+    </h6>
+  </div>
+  <div class="card-body">
+    {% if not open_elective_subjects %}
+      <div class="text-center text-muted py-4">No open electives available for your semester.</div>
+    {% elif registered.open_elective %}
+      <div class="alert alert-success d-flex align-items-center justify-content-between mb-0">
+        <div>
+          <i class="bi bi-check-circle-fill me-2 fs-5"></i>
+          <strong>Registered Choice:</strong> <code>{{ registered.open_elective.code }}</code> — {{ registered.open_elective.name }}
+        </div>
+        <span class="badge bg-success">Locked</span>
+      </div>
+    {% else %}
+      <form id="form-oe" onsubmit="submitFormRegistration(event, 'oe')">
+        <p class="small text-secondary mb-3">Select <strong>exactly one</strong> Open Elective subject offered college-wide:</p>
+        <div class="list-group mb-3">
+          {% for s in open_elective_subjects %}
+          <label class="list-group-item list-group-item-action d-flex align-items-center justify-content-between cursor-pointer p-3">
+            <div class="d-flex align-items-center gap-3">
+              <input class="form-check-input flex-shrink-0" type="radio" name="subject_id" value="{{ s.id }}" required>
+              <div>
+                <div class="fw-bold"><code>{{ s.code }}</code> — {{ s.name }}</div>
+                <small class="text-muted">Open to all departments in Semester {{ period.sem_number }}</small>
+              </div>
+            </div>
+            <span class="badge bg-outline-success">Choice Option</span>
+          </label>
+          {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-success px-4 fw-semibold">
+          <i class="bi bi-check-lg me-1"></i> Confirm Open Elective Choice
+        </button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+<!-- AEC / SEC -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-white">
+    <h6 class="mb-0 fw-bold text-warning">
+      <i class="bi bi-tools me-1"></i> Ability / Skill Enhancement Course (AEC/SEC)
+    </h6>
+  </div>
+  <div class="card-body">
+    {% if not aec_subjects %}
+      <div class="text-center text-muted py-4">No AEC/SEC options available for your department this semester.</div>
+    {% elif registered.ability_enhancement %}
+      <div class="alert alert-success d-flex align-items-center justify-content-between mb-0">
+        <div>
+          <i class="bi bi-check-circle-fill me-2 fs-5"></i>
+          <strong>Registered Choice:</strong> <code>{{ registered.ability_enhancement.code }}</code> — {{ registered.ability_enhancement.name }}
+        </div>
+        <span class="badge bg-success">Locked</span>
+      </div>
+    {% else %}
+      <form id="form-aec" onsubmit="submitFormRegistration(event, 'aec')">
+        <p class="small text-secondary mb-3">Select <strong>exactly one</strong> Skill Enhancement track for your section:</p>
+        <div class="list-group mb-3">
+          {% for s in aec_subjects %}
+          <label class="list-group-item list-group-item-action d-flex align-items-center justify-content-between cursor-pointer p-3">
+            <div class="d-flex align-items-center gap-3">
+              <input class="form-check-input flex-shrink-0" type="radio" name="subject_id" value="{{ s.id }}" required>
+              <div>
+                <div class="fw-bold"><code>{{ s.code }}</code> — {{ s.name }}</div>
+                <small class="text-muted">Practical Skill Enhancement Track</small>
+              </div>
+            </div>
+            <span class="badge bg-outline-warning">Choice Option</span>
+          </label>
+          {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-warning text-dark px-4 fw-semibold">
+          <i class="bi bi-check-lg me-1"></i> Confirm Skill Enhancement Track
+        </button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function submitFormRegistration(event, formType) {
+  event.preventDefault();
+  const form = document.getElementById(`form-${formType}`);
+  const btn = form.querySelector('button[type="submit"]');
+  const formData = new FormData(form);
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Submitting Registration...';
+
+  fetch("{{ url_for('student_registration.register') }}", {
+    method: "POST",
+    body: new URLSearchParams(formData)
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        showToast("Elective choice registered successfully!", "success");
+        setTimeout(() => location.reload(), 600);
+      } else {
+        showToast(data.message || "Registration failed.", "danger");
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-lg me-1"></i> Confirm Choice';
+      }
+    })
+    .catch(() => {
+      showToast("Network request failed.", "danger");
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-lg me-1"></i> Confirm Choice';
+    });
+}
+</script>
+{% endblock %}

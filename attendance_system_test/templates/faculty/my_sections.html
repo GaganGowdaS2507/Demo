@@ -1,0 +1,35 @@
+
+{% extends "base.html" %}
+{% block title %}My Sections{% endblock %}
+{% block page_title %}My Sections{% endblock %}
+
+{% block content %}
+<h4 class="fw-bold mb-3">My Sections</h4>
+{% if sections %}
+<div class="row g-3">
+    {% for sec in sections %}
+    <div class="col-md-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-body">
+                <h6 class="fw-bold mb-1">
+                    {{ sec.dept_code }}-{{ sec.section_label }}
+                    <span class="badge bg-success float-end">{{ sec.student_count }} students</span>
+                </h6>
+                <div class="text-muted small mb-2">Semester {{ sec.sem_number }}</div>
+                <div>
+                    {% for sub in sec.subjects %}
+                    <span class="badge bg-secondary me-1 mb-1">{{ sub.code }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-5 text-muted">
+    <i class="bi bi-grid fs-1"></i>
+    <p class="mt-2">No sections assigned yet.</p>
+</div>
+{% endif %}
+{% endblock %}

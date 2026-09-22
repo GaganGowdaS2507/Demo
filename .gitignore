@@ -50,10 +50,20 @@ ENV/
 env.bak/
 venv.bak/
 
-# Backend Logs
+# Desktop App Build, Databases & Executables
+*.db
+*.sqlite
+*.sqlite3
+build/
+dist/
+*.spec
+.pytest_cache/
+
+# Backend & Desktop Logs
 *.log
 attendance_system.log
 attendance_system_test/attendance_system.log
+desktop_app/*.log
 
 # Private Datasets & Uploads (Student facial photos, OCR datasets & embeddings)
 dataset/

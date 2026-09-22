@@ -64,7 +64,7 @@ def recognition_panel():
     today = datetime.now().strftime("%Y-%m-%d")
     cursor.execute(
         """
-        SELECT s.id, s.status, s.rtsp_url,
+        SELECT s.id, s.status, s.rtsp_url, s.recognition_mode,
                sub.code AS subject_code, sub.name AS subject_name,
                sec.section_label, d.code AS dept_code,
                t.start_time, t.end_time, t.room,
@@ -177,6 +177,10 @@ def start_recognition(session_id):
             flash(str(e), "danger")
             return redirect(url_for("recognition.recognition_panel"))
 
+    mode = request.form.get("recognition_mode", "FACE_ONLY").strip().upper()
+    if mode not in ("FACE_ONLY", "FINGERPRINT_ONLY", "DUAL_MODE"):
+        mode = "FACE_ONLY"
+
     success, message = False, "Unknown error."
     try:
         from app import stream_manager, recognition_engine, init_recognition
@@ -191,8 +195,12 @@ def start_recognition(session_id):
             flash("Stream manager not initialized.", "danger")
             return redirect(url_for("recognition.recognition_panel"))
 
-        if not rtsp_url:
+        if mode != "FINGERPRINT_ONLY" and not rtsp_url:
             flash("A camera stream URL/IP address is required.", "danger")
+            return redirect(url_for("recognition.recognition_panel"))
+
+        if mode in ("FINGERPRINT_ONLY", "DUAL_MODE") and not camera_id:
+            flash("Fingerprint modes require selecting a device from the dropdown.", "danger")
             return redirect(url_for("recognition.recognition_panel"))
 
         # Get section_id
@@ -206,25 +214,49 @@ def start_recognition(session_id):
             flash("Selected camera is assigned to a different section.", "danger")
             return redirect(url_for("recognition.recognition_panel"))
 
-        # Update session with RTSP URL and camera
+        parsed_cam_id = int(camera_id) if camera_id else None
+        if cam or parsed_cam_id:
+            try:
+                from recognition.fingerprint_service import _device_base_url
+                if not cam and parsed_cam_id:
+                    cursor.execute("SELECT rtsp_url FROM cameras WHERE id = %s", (parsed_cam_id,))
+                    cam = cursor.fetchone()
+                if cam and cam.get("rtsp_url"):
+                    base_url = _device_base_url(cam)
+                    import requests
+                    import threading
+                    def _arm_device_async(url, m):
+                        try:
+                            r = requests.get(f"{url}/set-attendance-mode", params={"mode": m}, headers={"Connection": "close"}, timeout=1.5)
+                            r.raise_for_status()
+                            logger.info(f"Device mode set to {m} at {url}")
+                        except Exception as e:
+                            logger.warning(f"Could not reach ESP32 device to set attendance mode: {e}")
+                    threading.Thread(target=_arm_device_async, args=(base_url, mode), daemon=True).start()
+            except Exception as dev_err:
+                logger.warning(f"Could not reach ESP32 device to set attendance mode: {dev_err}")
+
+        # Update session with RTSP URL, camera, and recognition mode
         conn = get_db()
         cur = conn.cursor()
         cur.execute(
             """
             UPDATE sessions
-            SET rtsp_url = %s, camera_id = %s, status = 'active',
+            SET rtsp_url = %s, camera_id = %s, recognition_mode = %s, status = 'active',
                 opened_by = %s, opened_at = NOW()
             WHERE id = %s
             """,
             (rtsp_url,
-             int(camera_id) if camera_id else None,
+             parsed_cam_id,
+             mode,
              current_user.id, session_id)
         )
         conn.commit()
 
         # Start stream
         success, message = stream_manager.start_stream(
-            session_id, rtsp_url, sess["section_id"], core_db.connection_pool
+            session_id, rtsp_url, sess["section_id"], core_db.connection_pool,
+            mode=mode, camera_id=parsed_cam_id
         )
 
         if success:

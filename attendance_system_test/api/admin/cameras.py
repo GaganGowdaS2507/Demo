@@ -239,7 +239,7 @@ def test_camera(camera_id):
         parsed = urlparse(rtsp_url)
         host = parsed.hostname
         if host:
-            resp = requests.get(f"http://{host}/status", timeout=3.0)
+            resp = requests.get(f"http://{host}/status", headers={"Connection": "close"}, timeout=3.0)
             if resp.status_code == 200:
                 sensor_info = f" | Sensor Control: Online ({resp.text.strip()[:40]})"
             else:

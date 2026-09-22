@@ -525,7 +525,7 @@ def faculty_start_recognition(session_id):
                     import threading
                     def _arm_device_async(url, m):
                         try:
-                            r = requests.get(f"{url}/set-attendance-mode", params={"mode": m}, timeout=1.5)
+                            r = requests.get(f"{url}/set-attendance-mode", params={"mode": m}, headers={"Connection": "close"}, timeout=1.5)
                             r.raise_for_status()
                             logger.info(f"Device mode set to {m} at {url}")
                         except Exception as e:

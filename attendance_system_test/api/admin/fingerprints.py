@@ -1,18 +1,38 @@
 from flask import Blueprint, request, jsonify, render_template
 from flask_login import current_user, login_required
+import logging
+import requests as http_requests
+from urllib.parse import urlparse
 
 from core.db import get_cursor
 from auth.helpers import admin_required
 from recognition.fingerprint_service import (
     enroll_student, link_existing_template, delete_enrollment,
-    get_device_slots, FingerprintError
+    get_device_slots, get_device_status, set_attendance_mode, get_last_scan,
+    FingerprintError
 )
+
+logger = logging.getLogger(__name__)
 
 fingerprints_bp = Blueprint(
     "fingerprints", __name__,
     url_prefix="/admin/fingerprints",
     template_folder="../../templates/admin"
 )
+
+
+def _resolve_device_base(camera_id):
+    """Return http://<ip> for the given camera_id's rtsp_url."""
+    cursor = get_cursor()
+    cursor.execute("SELECT rtsp_url FROM cameras WHERE id = %s", (camera_id,))
+    cam = cursor.fetchone()
+    if not cam:
+        raise ValueError("Camera/device not found.")
+    parsed = urlparse(cam["rtsp_url"])
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Camera has no usable IP/hostname on file.")
+    return f"http://{host}"
 
 @fingerprints_bp.route("/")
 @admin_required
@@ -108,6 +128,7 @@ def enroll():
     if not student_id or not camera_id:
         return jsonify({"success": False, "message": "Student and Target Device are required."})
     
+    print(f"\n[ENROLL] >>> Received enroll request: student_id={student_id}, camera_id={camera_id}, template_id={template_id}", flush=True)
     try:
         result = enroll_student(
             student_id=student_id,
@@ -115,10 +136,13 @@ def enroll():
             template_id=template_id,
             enrolled_by=current_user.id
         )
+        print(f"[ENROLL] <<< SUCCESS: {result}", flush=True)
         return jsonify({"success": True, **result})
     except FingerprintError as e:
+        print(f"[ENROLL] <<< FAILED (FingerprintError): {e}", flush=True)
         return jsonify({"success": False, "message": str(e)})
     except Exception as e:
+        print(f"[ENROLL] <<< FAILED (Unexpected): {e}", flush=True)
         return jsonify({"success": False, "message": f"Unexpected error: {e}"})
 
 
@@ -169,3 +193,32 @@ def delete():
         return jsonify({"success": False, "message": str(e)})
     except Exception as e:
         return jsonify({"success": False, "message": f"Unexpected error: {e}"})
+
+def _proxy(fn, key, *args):
+    try:
+        return jsonify({"success": True, key: fn(*args)})
+    except FingerprintError as e:
+        return jsonify({"success": False, "message": str(e)})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Unexpected error: {e}"})
+
+
+@fingerprints_bp.route("/api/device-status/<int:camera_id>")
+@admin_required
+def device_status_api(camera_id):
+    return _proxy(get_device_status, "status", camera_id)
+
+
+@fingerprints_bp.route("/api/last-scan/<int:camera_id>")
+@admin_required
+def last_scan_api(camera_id):
+    return _proxy(get_last_scan, "scan", camera_id)
+
+
+@fingerprints_bp.route("/api/set-mode", methods=["POST"])
+@admin_required
+def set_mode_api():
+    camera_id = request.form.get("camera_id", type=int)
+    if not camera_id:
+        return jsonify({"success": False, "message": "Device is required."})
+    return _proxy(set_attendance_mode, "mode", camera_id, request.form.get("attendance_mode"))

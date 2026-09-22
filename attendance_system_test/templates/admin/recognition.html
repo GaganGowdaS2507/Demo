@@ -55,7 +55,7 @@
         <div class="table-responsive">
             <table class="table table-hover mb-0 align-middle small">
                 <thead class="table-light">
-                    <tr><th>Time</th><th>Subject</th><th>Section</th><th>Faculty</th><th>Status</th><th>Camera</th><th>Actions</th></tr>
+                    <tr><th>Time</th><th>Subject</th><th>Section</th><th>Faculty</th><th>Status</th><th>Mode</th><th>Camera</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                     {% for s in sessions %}
@@ -68,6 +68,15 @@
                         <td>
                             {% if is_streaming %}<span class="badge bg-success"><i class="bi bi-broadcast"></i> Streaming</span>
                             {% else %}<span class="badge bg-{{ 'primary' if s.status == 'scheduled' else 'info' }}">{{ s.status|title }}</span>{% endif %}
+                        </td>
+                        <td>
+                            {% if s.recognition_mode == 'FINGERPRINT_ONLY' %}
+                                <span class="badge bg-warning text-dark"><i class="bi bi-fingerprint"></i> Finger</span>
+                            {% elif s.recognition_mode == 'DUAL_MODE' %}
+                                <span class="badge bg-info text-dark"><i class="bi bi-shield-check"></i> Dual</span>
+                            {% else %}
+                                <span class="badge bg-secondary"><i class="bi bi-person-bounding-box"></i> Face</span>
+                            {% endif %}
                         </td>
                         <td><small>{{ s.camera_name or '—' }}</small></td>
                         <td>
@@ -106,6 +115,15 @@
                                                 <label class="form-label">Camera Stream (URL or IP)</label>
                                                 <input type="text" class="form-control" name="rtsp_url" id="rtsp{{ s.id }}" value="{{ s.rtsp_url or s.camera_rtsp or '' }}" placeholder="192.168.4.1  or  rtsp://... / http://... / https://...">
                                                 <div class="form-text">Leave blank to use the selected camera's saved address, or type any RTSP/HTTP/HTTPS URL or bare IP to override it for this run.</div>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label fw-bold">Attendance Verification Mode</label>
+                                                <select class="form-select" name="recognition_mode">
+                                                    <option value="FACE_ONLY" {{ 'selected' if s.recognition_mode == 'FACE_ONLY' else '' }}>Camera Face Recognition Only</option>
+                                                    <option value="FINGERPRINT_ONLY" {{ 'selected' if s.recognition_mode == 'FINGERPRINT_ONLY' else '' }}>Fingerprint Sensor Only</option>
+                                                    <option value="DUAL_MODE" {{ 'selected' if s.recognition_mode == 'DUAL_MODE' else '' }}>Dual Mode (Fingerprint + Face Verification)</option>
+                                                </select>
+                                                <div class="form-text small">Fingerprint and Dual modes require selecting the hardware device from the dropdown above.</div>
                                             </div>
                                         </div>
                                         <div class="modal-footer"><button type="submit" class="btn btn-success"><i class="bi bi-play-fill"></i> Start Recognition</button></div>

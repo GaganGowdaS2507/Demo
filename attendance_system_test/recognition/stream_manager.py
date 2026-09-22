@@ -514,6 +514,18 @@ class RecognitionThread:
         self.status = "idle"
         logger.info(f"Recognition stopped for session {self.session_id}")
 
+        # If camera_id was provided and mode was biometric, reset device back to FACE_ONLY
+        if self.camera_id and self.mode in ("FINGERPRINT_ONLY", "DUAL_MODE"):
+            cid = self.camera_id
+            def _disarm_async():
+                try:
+                    from recognition.fingerprint_service import set_attendance_mode
+                    set_attendance_mode(cid, "FACE_ONLY")
+                    logger.info(f"Device {cid} attendance mode reset to FACE_ONLY on session stop")
+                except Exception as e:
+                    logger.debug(f"Could not reset device {cid} mode on stop: {e}")
+            threading.Thread(target=_disarm_async, daemon=True).start()
+
     def get_annotated_frame(self):
         """Get latest annotated frame as JPEG bytes for MJPEG streaming."""
         with self._annotated_lock:
@@ -694,7 +706,7 @@ class RecognitionThread:
         # so a stale leftover match from a previous session is never
         # re-processed as new the moment this loop starts.
         try:
-            primer = requests.get(f"{base_url}/last-scan", timeout=2.0)
+            primer = requests.get(f"{base_url}/last-scan", headers={"Connection": "close"}, timeout=2.0)
             if primer.status_code == 200:
                 self._last_scan_seq = primer.json().get("seq", -1)
         except Exception:
@@ -702,7 +714,7 @@ class RecognitionThread:
 
         while not self.stop_event.is_set():
             try:
-                resp = requests.get(f"{base_url}/last-scan", timeout=2.0)
+                resp = requests.get(f"{base_url}/last-scan", headers={"Connection": "close"}, timeout=2.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     seq = data.get("seq", -1)

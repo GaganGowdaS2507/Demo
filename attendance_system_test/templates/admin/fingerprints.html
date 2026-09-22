@@ -40,12 +40,12 @@
                 <ul class="nav nav-tabs nav-fill card-header-tabs m-0" id="enrollmentTabs" role="tablist">
                     <li class="nav-item" role="presentation">
                         <button class="nav-link active py-3 fw-bold small text-uppercase" id="link-tab" data-bs-toggle="tab" data-bs-target="#link-panel" type="button" role="tab">
-                            <i class="bi bi-link-45deg me-1"></i> Link Existing Slot
+                            <i class="bi bi-link-45deg me-1"></i> Device IP & Link
                         </button>
                     </li>
                     <li class="nav-item" role="presentation">
                         <button class="nav-link py-3 fw-bold small text-uppercase" id="live-tab" data-bs-toggle="tab" data-bs-target="#live-panel" type="button" role="tab">
-                            <i class="bi bi-fingerprint me-1"></i> Live 2-Touch Scan
+                            <i class="bi bi-fingerprint me-1"></i> Live Server Scan
                         </button>
                     </li>
                 </ul>
@@ -65,6 +65,33 @@
                     <div class="form-text small" id="sharedSlotHint">Select the ESP32 node equipped with the fingerprint module.</div>
                 </div>
 
+                <div class="p-3 bg-light rounded border mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="fw-bold small text-uppercase text-muted">Hardware & Attendance Mode</span>
+                        <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none small" onclick="refreshDeviceStatus()">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+                    <div id="deviceStatusLine" class="small text-muted mb-2">Select a device to see its status.</div>
+                    <div class="input-group input-group-sm">
+                        <select class="form-select" id="deviceAttMode">
+                            <option value="FACE_ONLY">Face only</option>
+                            <option value="FINGERPRINT_ONLY">Fingerprint only</option>
+                            <option value="DUAL_MODE">Dual (fingerprint + face)</option>
+                        </select>
+                        <button type="button" class="btn btn-outline-primary" onclick="applyDeviceMode()">Apply Mode</button>
+                    </div>
+                    <div class="form-text small text-muted mt-1">
+                        <i class="bi bi-info-circle"></i> Attendance Mode is used for live classroom sessions. Keep on <strong>Face only</strong> when enrolling fingerprints.
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2" onclick="testScan()">
+                        <i class="bi bi-fingerprint me-1"></i> Test Scan (touch sensor within 45s)
+                    </button>
+                    <div id="testScanResult" class="small mt-2"></div>
+                    <a id="deviceDirectLink" href="http://192.168.4.1" target="_blank" class="btn btn-sm btn-outline-dark w-100 mt-2">
+                        <i class="bi bi-box-arrow-up-right me-1"></i> Open ESP32 Hardware Web Panel (192.168.4.1)
+                    </a>
+                </div>
                 <!-- Filter Existing Students Box -->
                 <div class="p-3 bg-light rounded border mb-3">
                     <label class="form-label fw-bold small text-uppercase text-muted d-flex justify-content-between align-items-center">
@@ -133,41 +160,63 @@
                 </div>
 
                 <div class="tab-content" id="enrollmentTabsContent">
-                    <!-- ================= TAB 1: LINK PRE-ENROLLED SLOT ================= -->
+                    <!-- ================= TAB 1: DIRECT DEVICE IP & LINK (PRIMARY) ================= -->
                     <div class="tab-pane fade show active" id="link-panel" role="tabpanel">
+                        <!-- Step 1: Enroll on Hardware Device -->
+                        <div class="card border-primary mb-3 bg-light">
+                            <div class="card-body p-3">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="fw-bold text-primary small text-uppercase"><i class="bi bi-1-circle-fill me-1"></i> Step 1: Enroll on Device</span>
+                                    <span class="badge bg-success" id="linkNextSlotBadge">Slot #1 Next</span>
+                                </div>
+                                <p class="small text-muted mb-2">
+                                    Open the device hardware panel directly. Enter the slot number into the <strong>ID (1-127)</strong> box, click <strong>Enroll</strong>, and follow the 2-touch OLED prompt.
+                                </p>
+                                <div class="d-flex gap-2">
+                                    <a id="deviceDirectLinkBtn" href="http://192.168.4.1" target="_blank" class="btn btn-primary btn-sm flex-grow-1 fw-bold">
+                                        <i class="bi bi-box-arrow-up-right me-1"></i> Open Device Panel (192.168.4.1)
+                                    </a>
+                                    <button type="button" class="btn btn-outline-dark btn-sm" onclick="toggleDeviceIframe()" title="Toggle Live Device Screen">
+                                        <i class="bi bi-display me-1"></i> Screen
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Step 2: Link Slot to Student in Database -->
                         <form id="linkExistingForm">
-                            <div class="alert alert-info border-info p-2 small mb-3">
-                                <i class="bi bi-info-circle-fill me-1"></i>
-                                <strong>For Pre-Enrolled Fingerprints:</strong> If the student's finger is already stored on the sensor flash memory, enter their Slot ID (1–127) here to link them directly without re-scanning.
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="fw-bold text-dark small text-uppercase"><i class="bi bi-2-circle-fill text-success me-1"></i> Step 2: Link to Student</span>
+                                <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none small" onclick="probeSensorLastScan()" title="Auto-detect slot by touching sensor">
+                                    <i class="bi bi-broadcast"></i> Detect Last Scan
+                                </button>
                             </div>
 
                             <div class="mb-3">
-                                <label class="form-label fw-bold small text-uppercase text-muted d-flex justify-content-between">
-                                    <span>Existing Template Slot ID (1–127) *</span>
-                                    <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none small" onclick="probeSensorLastScan()" title="Check what slot was scanned last on the hardware sensor">
-                                        <i class="bi bi-broadcast"></i> Detect Last Scan
-                                    </button>
-                                </label>
+                                <label class="form-label fw-bold small text-muted">Template Slot ID (1–127) *</label>
                                 <div class="input-group">
                                     <span class="input-group-text bg-light"><i class="bi bi-hash"></i></span>
-                                    <input type="number" class="form-control" id="linkTemplateId" min="1" max="127" placeholder="Enter Slot # (e.g. 1, 2, 3...)" required>
+                                    <input type="number" class="form-control" id="linkTemplateId" min="1" max="127" placeholder="Slot # (e.g. 1, 2, 3...)" required>
+                                    <button type="button" class="btn btn-outline-secondary" onclick="onSharedDeviceChanged()" title="Refresh Next Free Slot">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
                                 </div>
-                                <div class="form-text small" id="probeResultText">Enter the hardware template slot number already saved on the sensor.</div>
+                                <div class="form-text small" id="probeResultText">Slot number where finger was saved on hardware.</div>
                             </div>
 
                             <div id="linkAlert" class="alert d-none mb-3" role="alert"></div>
 
-                            <button type="submit" id="linkBtn" class="btn btn-success w-100 py-2 fw-semibold">
-                                <i class="bi bi-link-45deg me-1"></i> Link Slot to Student in Database
+                            <button type="submit" id="linkBtn" class="btn btn-success w-100 py-2 fw-bold">
+                                <i class="bi bi-link-45deg me-1"></i> Save & Link Slot to Student
                             </button>
                         </form>
                     </div>
 
-                    <!-- ================= TAB 2: LIVE 2-TOUCH HARDWARE SCAN ================= -->
+                    <!-- ================= TAB 2: LIVE SERVER SCAN ================= -->
                     <div class="tab-pane fade" id="live-panel" role="tabpanel">
                         <form id="liveEnrollForm">
                             <div class="alert alert-light border p-2 mb-3 small">
-                                <div class="fw-semibold mb-1 text-primary"><i class="bi bi-hand-index-thumb-fill me-1"></i> 2-Touch Hardware Protocol:</div>
+                                <div class="fw-semibold mb-1 text-primary"><i class="bi bi-hand-index-thumb-fill me-1"></i> 2-Touch Server Protocol:</div>
                                 <ol class="mb-0 ps-3 small text-muted">
                                     <li>Click button & have student place finger on sensor.</li>
                                     <li>Lift finger when prompted and place <strong>same finger</strong> again.</li>
@@ -201,8 +250,27 @@
         </div>
     </div>
 
-    <!-- Right Column: Enrolled Fingerprints Table -->
+    <!-- Right Column: Enrolled Fingerprints Table & Live Screen -->
     <div class="col-lg-7 col-xl-8">
+        <!-- Embedded Live Device Screen -->
+        <div class="card shadow-sm border-0 mb-3" id="embeddedDeviceCard" style="display: none;">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center py-2">
+                <span class="fw-bold small"><i class="bi bi-cpu me-2"></i>ESP32 Hardware Screen (<span id="deviceIpLabel">192.168.4.1</span>)</span>
+                <div class="d-flex align-items-center gap-2">
+                    <a id="deviceExtLinkHeader" href="http://192.168.4.1" target="_blank" class="btn btn-sm btn-outline-light py-0 px-2 small">
+                        <i class="bi bi-box-arrow-up-right me-1"></i> Open in New Tab
+                    </a>
+                    <button type="button" class="btn btn-sm btn-outline-light py-0 px-2 small" onclick="refreshDeviceIframe()" title="Reload Frame">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                    <button type="button" class="btn-close btn-close-white small" onclick="toggleDeviceIframe()"></button>
+                </div>
+            </div>
+            <div class="card-body p-0 bg-light">
+                <iframe id="deviceLiveFrame" src="about:blank" style="width: 100%; height: 380px; border: none;" title="ESP32 Device Screen"></iframe>
+            </div>
+        </div>
+
         <div class="card shadow-sm border-0">
             <div class="card-header bg-white py-3">
                 <div class="row g-2 align-items-center justify-content-between">
@@ -211,6 +279,9 @@
                     </div>
                     <div class="col-md-7">
                         <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-dark text-nowrap" onclick="toggleDeviceIframe()" title="Toggle Device Screen">
+                                <i class="bi bi-display me-1"></i> Device Screen
+                            </button>
                             <select class="form-select form-select-sm" id="tableFilterDevice" onchange="filterEnrolledTable()">
                                 <option value="">All Devices</option>
                                 {% for c in cameras %}
@@ -296,6 +367,26 @@
 </div>
 
 <script>
+// =============================================================================
+// All device communication routes through Flask backend API proxy endpoints.
+// This completely avoids browser CORS and Private Network Access restrictions.
+// Flask (running locally on your laptop) connects directly to http://192.168.4.1
+// when your laptop is connected to ESP32-Attendance-AP Wi-Fi.
+// =============================================================================
+
+const URLS = {
+    status:   id => '{{ url_for("fingerprints.device_status_api", camera_id=0) }}'.replace('/0', '/' + id),
+    lastScan: id => '{{ url_for("fingerprints.last_scan_api", camera_id=0) }}'.replace('/0', '/' + id),
+    setMode:  '{{ url_for("fingerprints.set_mode_api") }}',
+    enroll:   '{{ url_for("fingerprints.enroll") }}',
+    link:     '{{ url_for("fingerprints.link_existing") }}',
+    del:      '{{ url_for("fingerprints.delete") }}',
+    slots:    id => '{{ url_for("fingerprints.device_slots_api", camera_id=0) }}'.replace('/0', '/' + id)
+};
+
+let knownAttMode = 'FACE_ONLY';
+const currentCameraId = () => document.getElementById('sharedCameraId').value;
+
 // --- Student Filtering Logic ---
 function filterSharedStudentsList() {
     const deptId = document.getElementById('sharedFilterDept').value;
@@ -310,8 +401,8 @@ function filterSharedStudentsList() {
         const optDept = opt.getAttribute('data-dept');
         const optSem = opt.getAttribute('data-sem');
         const optSec = opt.getAttribute('data-sec');
-        const optUsn = opt.getAttribute('data-usn').toLowerCase();
-        const optName = opt.getAttribute('data-name').toLowerCase();
+        const optUsn = (opt.getAttribute('data-usn') || '').toLowerCase();
+        const optName = (opt.getAttribute('data-name') || '').toLowerCase();
 
         let match = true;
         if (deptId && optDept !== deptId) match = false;
@@ -351,9 +442,105 @@ function onSharedStudentSelected() {
     }
 }
 
-// --- Device Slot Allocation Logic ---
+// --- Device Status via Flask Proxy ---
+async function refreshDeviceStatus() {
+    const id = currentCameraId();
+    const line = document.getElementById('deviceStatusLine');
+    if (!id) { line.textContent = 'Select a device to see its status.'; return; }
+    line.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Contacting device via server...';
+    try {
+        const res = await fetch(URLS.status(id));
+        const data = await res.json();
+        if (!data.success) {
+            line.innerHTML = `<span class="text-danger"><i class="bi bi-wifi-off me-1"></i> ${data.message}</span><br><small class="text-muted">Ensure laptop is connected to ESP32-Attendance-AP Wi-Fi.</small>`;
+            return;
+        }
+        const s = data.status;
+        knownAttMode = s.attendanceMode || 'FACE_ONLY';
+        document.getElementById('deviceAttMode').value = knownAttMode;
+        const sensor = s.fingerReady
+            ? '<span class="text-success"><i class="bi bi-check-circle-fill"></i> Sensor OK</span>'
+            : '<span class="text-danger"><i class="bi bi-x-circle-fill"></i> Sensor NOT detected</span>';
+        line.innerHTML = `${sensor} &nbsp;·&nbsp; <strong>${s.enrolledCount ?? '?'}</strong> templates on sensor &nbsp;·&nbsp; mode: <strong>${s.attendanceMode}</strong>`;
+    } catch (e) {
+        line.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i> ${e.message}</span>`;
+    }
+}
+
+async function postMode(mode) {
+    const fd = new FormData();
+    fd.append('camera_id', currentCameraId());
+    fd.append('attendance_mode', mode);
+    const res = await fetch(URLS.setMode, { method: 'POST', body: fd });
+    return res.json();
+}
+
+async function applyDeviceMode() {
+    if (!currentCameraId()) { alert('Select a device first.'); return; }
+    const mode = document.getElementById('deviceAttMode').value;
+    const data = await postMode(mode);
+    if (!data.success) { alert('Error: ' + data.message); return; }
+    knownAttMode = mode;
+    refreshDeviceStatus();
+}
+
+async function testScan() {
+    const id = currentCameraId();
+    const out = document.getElementById('testScanResult');
+    if (!id) { alert('Select a device first.'); return; }
+    const prevMode = knownAttMode;
+    try {
+        let r = await postMode('FINGERPRINT_ONLY');
+        if (!r.success) { out.innerHTML = `<span class="text-danger">${r.message}</span>`; return; }
+        const baseRes = await (await fetch(URLS.lastScan(id))).json();
+        const baseline = (baseRes.scan && baseRes.scan.seq) ? baseRes.scan.seq : -1;
+        out.textContent = 'Armed for testing. Touch the sensor now...';
+        for (let i = 0; i < 30; i++) {
+            await new Promise(res => setTimeout(res, 1000));
+            const d = await (await fetch(URLS.lastScan(id))).json();
+            if (d.success && d.scan && d.scan.seq !== baseline) {
+                const sc = d.scan;
+                out.innerHTML = !sc.matched
+                    ? '<span class="text-warning"><i class="bi bi-exclamation-circle"></i> Finger read but not recognised on sensor.</span>'
+                    : sc.student
+                        ? `<span class="text-success"><i class="bi bi-check-circle-fill"></i> Slot #${sc.id} → ${sc.student.name} (${sc.student.usn}), confidence ${sc.confidence}</span>`
+                        : `<span class="text-warning"><i class="bi bi-info-circle"></i> Slot #${sc.id} matched on sensor, not linked in DB yet.</span>`;
+                return;
+            }
+        }
+        out.innerHTML = '<span class="text-muted">No scan detected in 30s.</span>';
+    } catch (e) {
+        out.innerHTML = `<span class="text-danger">${e.message}</span>`;
+    } finally {
+        await postMode(prevMode);
+        refreshDeviceStatus();
+    }
+}
+
+async function probeSensorLastScan() {
+    const id = currentCameraId();
+    const probeText = document.getElementById('probeResultText');
+    const linkInput = document.getElementById('linkTemplateId');
+    if (!id) { alert('Please select a Target Recognition Device first.'); return; }
+    probeText.textContent = 'Querying device...';
+    try {
+        const data = await (await fetch(URLS.lastScan(id))).json();
+        if (!data.success) { probeText.innerHTML = `<span class="text-danger">${data.message}</span>`; return; }
+        const sc = data.scan;
+        if (sc && sc.matched && sc.id) {
+            linkInput.value = sc.id;
+            probeText.innerHTML = `<span class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> Detected Slot #${sc.id} (confidence ${sc.confidence})</span>`;
+        } else {
+            probeText.innerHTML = '<span class="text-warning"><i class="bi bi-info-circle"></i> No matched scan found. Touch the sensor, then click detect again.</span>';
+        }
+    } catch (err) {
+        probeText.innerHTML = `<span class="text-danger">${err.message}</span>`;
+    }
+}
+
 async function onSharedDeviceChanged() {
-    const cameraId = document.getElementById('sharedCameraId').value;
+    refreshDeviceStatus();
+    const cameraId = currentCameraId();
     const badge = document.getElementById('liveSlotStatusBadge');
     const liveInput = document.getElementById('liveTemplateId');
     const hint = document.getElementById('sharedSlotHint');
@@ -369,13 +556,17 @@ async function onSharedDeviceChanged() {
     badge.innerText = 'Checking Slots...';
 
     try {
-        const res = await fetch(`{{ url_for("fingerprints.device_slots_api", camera_id=0) }}`.replace('/0', `/${cameraId}`));
+        const res = await fetch(URLS.slots(cameraId));
         const data = await res.json();
         if (data.success && data.slots) {
             const s = data.slots;
             liveInput.value = s.next_free_slot || '';
+            const linkInput = document.getElementById('linkTemplateId');
+            if (linkInput) linkInput.value = s.next_free_slot || '';
             badge.className = 'badge bg-success';
             badge.innerText = `Slot #${s.next_free_slot} Suggested`;
+            const linkBadge = document.getElementById('linkNextSlotBadge');
+            if (linkBadge) linkBadge.innerText = `Slot #${s.next_free_slot} Next`;
             hint.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> ${s.used_count}/127 slots mapped. Next free: Slot #${s.next_free_slot}</span>`;
         } else {
             badge.className = 'badge bg-danger';
@@ -385,52 +576,83 @@ async function onSharedDeviceChanged() {
         badge.className = 'badge bg-secondary';
         badge.innerText = 'Manual Slot Input';
     }
-}
 
-// --- Probe Sensor Last Scan Shortcut ---
-async function probeSensorLastScan() {
-    const cameraId = document.getElementById('sharedCameraId').value;
-    const probeText = document.getElementById('probeResultText');
-    const linkInput = document.getElementById('linkTemplateId');
-
-    if (!cameraId) {
-        alert('Please select a Target Recognition Device first.');
-        return;
+    const sel = document.getElementById('sharedCameraId');
+    let ip = null;
+    if (sel && sel.selectedIndex > 0) {
+        const raw = sel.options[sel.selectedIndex].getAttribute('data-ip') || '';
+        try {
+            const url = new URL(raw.startsWith('http') || raw.startsWith('rtsp') ? raw : 'http://' + raw);
+            ip = url.hostname;
+        } catch(e) {
+            const m = raw.match(/(\d+\.\d+\.\d+\.\d+)/);
+            if (m) ip = m[1];
+        }
     }
-
-    probeText.innerHTML = '<span class="text-info"><i class="spinner-border spinner-border-sm"></i> Querying device /last-scan...</span>';
-
-    try {
-        const camSelect = document.getElementById('sharedCameraId');
-        const opt = camSelect.options[camSelect.selectedIndex];
-        let streamUrl = opt.getAttribute('data-ip') || '';
-        let host = streamUrl.replace('http://', '').replace('https://', '').replace('rtsp://', '').split(':')[0].split('/')[0];
-
-        if (!host) {
-            probeText.innerHTML = '<span class="text-danger">Invalid device IP.</span>';
-            return;
-        }
-
-        const res = await fetch(`http://${host}/last-scan`, { timeout: 3000 });
-        const data = await res.json();
-
-        if (data.matched && data.template_id) {
-            linkInput.value = data.template_id;
-            probeText.innerHTML = `<span class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> Detected Slot #${data.template_id} (Confidence: ${data.confidence || 'N/A'})!</span>`;
-        } else {
-            probeText.innerHTML = `<span class="text-warning"><i class="bi bi-exclamation-circle"></i> Sensor reachable, but no finger matched in last scan. (Raw: ${JSON.stringify(data)})</span>`;
-        }
-    } catch (err) {
-        probeText.innerHTML = `<span class="text-muted"><i class="bi bi-info-circle"></i> Could not auto-detect (${err.message}). Please manually type the Slot # (e.g. 1, 2, 3).</span>`;
+    const targetUrl = ip ? `http://${ip}` : 'http://192.168.4.1';
+    const linkEl = document.getElementById('deviceDirectLink');
+    if (linkEl) {
+        linkEl.href = targetUrl;
+        linkEl.innerHTML = `<i class="bi bi-box-arrow-up-right me-1"></i> Open ESP32 Web Panel (${ip || '192.168.4.1'})`;
+    }
+    const linkBtn = document.getElementById('deviceDirectLinkBtn');
+    if (linkBtn) {
+        linkBtn.href = targetUrl;
+        linkBtn.innerHTML = `<i class="bi bi-box-arrow-up-right me-1"></i> Open Device Panel (${ip || '192.168.4.1'})`;
+    }
+    const extHeader = document.getElementById('deviceExtLinkHeader');
+    if (extHeader) extHeader.href = targetUrl;
+    const ipLabel = document.getElementById('deviceIpLabel');
+    if (ipLabel) ipLabel.innerText = ip || '192.168.4.1';
+    const iframe = document.getElementById('deviceLiveFrame');
+    if (iframe && iframe.getAttribute('data-loaded')) {
+        iframe.src = targetUrl;
     }
 }
 
-// --- TAB 1: Link Existing Slot Submission ---
+function toggleDeviceIframe() {
+    const card = document.getElementById('embeddedDeviceCard');
+    const iframe = document.getElementById('deviceLiveFrame');
+    if (!card) return;
+    if (card.style.display === 'none' || !card.style.display) {
+        card.style.display = 'block';
+        if (!iframe.src || iframe.src === 'about:blank' || iframe.src.endsWith('about:blank')) {
+            const sel = document.getElementById('sharedCameraId');
+            let ip = '192.168.4.1';
+            if (sel && sel.selectedIndex > 0) {
+                const raw = sel.options[sel.selectedIndex].getAttribute('data-ip') || '';
+                try {
+                    const u = new URL(raw.startsWith('http') || raw.startsWith('rtsp') ? raw : 'http://' + raw);
+                    if (u.hostname) ip = u.hostname;
+                } catch(e) {
+                    const m = raw.match(/(\d+\.\d+\.\d+\.\d+)/);
+                    if (m) ip = m[1];
+                }
+            }
+            iframe.src = `http://${ip}`;
+            iframe.setAttribute('data-loaded', 'true');
+        }
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+        card.style.display = 'none';
+    }
+}
+
+function refreshDeviceIframe() {
+    const iframe = document.getElementById('deviceLiveFrame');
+    if (iframe && iframe.src && !iframe.src.endsWith('about:blank')) {
+        iframe.src = iframe.src;
+    }
+}
+
+// =============================================================================
+// TAB 1: LINK EXISTING PRE-ENROLLED SLOT
+// =============================================================================
 document.getElementById('linkExistingForm').addEventListener('submit', async function(e) {
     e.preventDefault();
     const btn = document.getElementById('linkBtn');
     const alertBox = document.getElementById('linkAlert');
-    const cameraId = document.getElementById('sharedCameraId').value;
+    const cameraId = currentCameraId();
     const studentId = document.getElementById('sharedStudentId').value;
     const templateId = document.getElementById('linkTemplateId').value;
 
@@ -445,28 +667,14 @@ document.getElementById('linkExistingForm').addEventListener('submit', async fun
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Linking in Database...';
     alertBox.classList.add('d-none');
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-
     try {
         const formData = new FormData();
         formData.append('camera_id', cameraId);
         formData.append('student_id', studentId);
         formData.append('template_id', templateId);
 
-        const res = await fetch('{{ url_for("fingerprints.link_existing") }}', {
-            method: 'POST',
-            body: formData,
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-
-        let data = {};
-        try {
-            data = await res.json();
-        } catch (e) {
-            data = { success: false, message: `Server error (HTTP ${res.status}).` };
-        }
+        const res = await fetch(URLS.link, { method: 'POST', body: formData });
+        const data = await res.json();
 
         if (res.ok && data.success) {
             alertBox.className = 'alert alert-success border-success';
@@ -481,48 +689,45 @@ document.getElementById('linkExistingForm').addEventListener('submit', async fun
             btn.innerHTML = '<i class="bi bi-link-45deg me-1"></i> Link Slot to Student in Database';
         }
     } catch (err) {
-        clearTimeout(timeoutId);
         alertBox.className = 'alert alert-danger border-danger';
-        if (err.name === 'AbortError') {
-            alertBox.innerHTML = `<strong><i class="bi bi-clock-history me-1"></i> Request Timed Out:</strong> Server did not respond within 8 seconds. Please check if Flask server is running.`;
-        } else {
-            alertBox.innerHTML = `<strong><i class="bi bi-wifi-off me-1"></i> Network Error:</strong> ${err.message}`;
-        }
+        alertBox.innerHTML = `<strong><i class="bi bi-wifi-off me-1"></i> Network Error:</strong> ${err.message}`;
         alertBox.classList.remove('d-none');
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-link-45deg me-1"></i> Link Slot to Student in Database';
-    } finally {
-        if (!alertBox.classList.contains('alert-success')) {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-link-45deg me-1"></i> Link Slot to Student in Database';
-        }
     }
 });
 
-// --- TAB 2: Live 2-Touch Enrollment Submission ---
+// =============================================================================
+// TAB 2: LIVE 2-TOUCH HARDWARE ENROLLMENT
+// =============================================================================
 document.getElementById('liveEnrollForm').addEventListener('submit', async function(e) {
     e.preventDefault();
     const btn = document.getElementById('liveEnrollBtn');
     const alertBox = document.getElementById('liveAlert');
-    const cameraId = document.getElementById('sharedCameraId').value;
+    const cameraId = currentCameraId();
     const studentId = document.getElementById('sharedStudentId').value;
     const templateId = document.getElementById('liveTemplateId').value;
 
     if (!cameraId || !studentId || !templateId) {
         alertBox.className = 'alert alert-danger';
-        alertBox.innerHTML = 'Please fill all required fields.';
+        alertBox.innerHTML = 'Please fill all required fields: select Device, Student, and Slot ID.';
         alertBox.classList.remove('d-none');
         return;
     }
 
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Waiting for Sensor Touches (15s)...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Hardware 2-Touch Enrollment Active...';
     alertBox.className = 'alert alert-info border-info';
-    alertBox.innerHTML = '<strong><i class="bi bi-fingerprint"></i> Enrollment active on device.</strong><br>Please have student scan finger <strong>TWICE</strong> on the hardware sensor now...';
+    alertBox.innerHTML = `<strong><i class="bi bi-fingerprint"></i> Enrollment active on device!</strong><br>
+        <ol class="mb-0 mt-2 ps-3 small">
+          <li>Place student's finger on the sensor (Touch 1).</li>
+          <li>Lift finger when sensor OLED displays <em>"Remove finger..."</em>.</li>
+          <li>Place the <strong>same finger</strong> again (Touch 2).</li>
+        </ol>`;
     alertBox.classList.remove('d-none');
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
 
     try {
         const formData = new FormData();
@@ -530,23 +735,18 @@ document.getElementById('liveEnrollForm').addEventListener('submit', async funct
         formData.append('student_id', studentId);
         formData.append('template_id', templateId);
 
-        const res = await fetch('{{ url_for("fingerprints.enroll") }}', {
+        const res = await fetch(URLS.enroll, {
             method: 'POST',
             body: formData,
             signal: controller.signal
         });
         clearTimeout(timeoutId);
 
-        let data = {};
-        try {
-            data = await res.json();
-        } catch (e) {
-            data = { success: false, message: `Server error (HTTP ${res.status}).` };
-        }
+        const data = await res.json().catch(() => ({ success: false, message: `Server HTTP ${res.status}` }));
 
         if (res.ok && data.success) {
             alertBox.className = 'alert alert-success border-success';
-            alertBox.innerHTML = `<strong><i class="bi bi-check-circle-fill me-1"></i> Success!</strong> Registered in Slot #${data.template_id}.<br><small class="text-muted">${data.device_message || 'Template saved successfully.'}</small>`;
+            alertBox.innerHTML = `<strong><i class="bi bi-check-circle-fill me-1"></i> Enrolled Successfully!</strong> Registered in Slot #${data.template_id}.<br><small class="text-muted">${data.device_message || 'Template saved on device flash and mapped in database.'}</small>`;
             setTimeout(() => window.location.reload(), 1500);
         } else {
             alertBox.className = 'alert alert-danger border-danger';
@@ -559,22 +759,19 @@ document.getElementById('liveEnrollForm').addEventListener('submit', async funct
         clearTimeout(timeoutId);
         alertBox.className = 'alert alert-danger border-danger';
         if (err.name === 'AbortError') {
-            alertBox.innerHTML = `<strong><i class="bi bi-clock-history me-1"></i> Timeout:</strong> Hardware sensor took longer than 20 seconds. Please try again.`;
+            alertBox.innerHTML = `<strong><i class="bi bi-clock-history me-1"></i> Timeout:</strong> Hardware sensor took longer than 60 seconds. Please try again.`;
         } else {
             alertBox.innerHTML = `<strong><i class="bi bi-wifi-off me-1"></i> Network Error:</strong> ${err.message}`;
         }
         alertBox.classList.remove('d-none');
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-fingerprint me-1"></i> Start Hardware 2-Touch Enrollment';
-    } finally {
-        if (!alertBox.classList.contains('alert-success')) {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-fingerprint me-1"></i> Start Hardware 2-Touch Enrollment';
-        }
     }
 });
 
-// --- Delete Enrollment ---
+// =============================================================================
+// DELETE ENROLLMENT
+// =============================================================================
 async function confirmDeleteEnrollment(btn, fpId, studentId, cameraId, name, slot, devName) {
     if (typeof btn === 'object' && btn.getAttribute) {
         fpId = btn.getAttribute('data-rec-id');
@@ -584,7 +781,7 @@ async function confirmDeleteEnrollment(btn, fpId, studentId, cameraId, name, slo
         slot = btn.getAttribute('data-template-id');
         devName = btn.getAttribute('data-camera-name');
     }
-    if (!confirm(`Are you sure you want to delete the fingerprint for ${name} (Slot #${slot}) on ${devName}?\n\nThis will send a hardware command to clear the template from the sensor's flash memory.`)) {
+    if (!confirm(`Are you sure you want to delete the fingerprint for ${name} (Slot #${slot}) on ${devName}?\n\nThis will send a hardware command to clear the template from the sensor's flash memory and remove the database record.`)) {
         return;
     }
     const origHtml = btn.innerHTML;
@@ -597,10 +794,7 @@ async function confirmDeleteEnrollment(btn, fpId, studentId, cameraId, name, slo
         formData.append('student_id', studentId);
         formData.append('camera_id', cameraId);
 
-        const res = await fetch('{{ url_for("fingerprints.delete") }}', {
-            method: 'POST',
-            body: formData
-        });
+        const res = await fetch(URLS.del, { method: 'POST', body: formData });
         const data = await res.json();
 
         if (data.success) {
@@ -628,10 +822,10 @@ function filterEnrolledTable() {
 
     let count = 0;
     for (let r of rows) {
-        const dev = r.getAttribute('data-device').toLowerCase();
-        const usn = r.getAttribute('data-usn');
-        const name = r.getAttribute('data-name');
-        const sec = r.getAttribute('data-sec').toLowerCase();
+        const dev = (r.getAttribute('data-device') || '').toLowerCase();
+        const usn = (r.getAttribute('data-usn') || '');
+        const name = (r.getAttribute('data-name') || '');
+        const sec = (r.getAttribute('data-sec') || '').toLowerCase();
 
         let match = true;
         if (devFilter && !dev.includes(devFilter)) match = false;

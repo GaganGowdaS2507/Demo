@@ -60,7 +60,7 @@ def next_free_template_id(camera_id):
     return slots_info["next_free_slot"]
 
 
-def enroll_student(student_id, camera_id, template_id=None, enrolled_by=None, timeout=20):
+def enroll_student(student_id, camera_id, template_id=None, enrolled_by=None, timeout=50):
     """
     Assign the student an explicit or next free template slot on `camera_id`,
     then tell the device to run its enrollment flow for that slot.
@@ -95,15 +95,35 @@ def enroll_student(student_id, camera_id, template_id=None, enrolled_by=None, ti
     else:
         template_id = next_free_template_id(camera_id)
 
-    base_url = _device_base_url(cam)
+    cursor.execute("""
+        SELECT s.id, s.usn, u.full_name AS name
+        FROM students s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.id = %s
+    """, (student_id,))
+    student_row = cursor.fetchone()
+    student_name = student_row["name"] if student_row else f"ID #{student_id}"
 
+    base_url = _device_base_url(cam)
+    headers = {"Connection": "close"}
+
+    print(f"[ENROLL] Contacting ESP32 at {base_url}/enroll?id={template_id} (timeout={timeout}s)...", flush=True)
     try:
-        resp = requests.get(f"{base_url}/enroll", params={"id": template_id}, timeout=timeout)
+        resp = requests.get(
+            f"{base_url}/enroll",
+            params={"id": template_id},
+            headers=headers,
+            timeout=timeout
+        )
         resp.raise_for_status()
     except requests.RequestException as e:
+        print(f"[ENROLL] Request to {base_url} failed: {e}", flush=True)
         raise FingerprintError(f"Could not reach device ({base_url}): {e}")
 
-    result_text = resp.text
+    result_text = resp.text.strip()
+    print(f"[ENROLL] ESP32 raw response: '{result_text}'", flush=True)
+    if "Enroll Success" not in result_text:
+        raise FingerprintError(f"Sensor did not enroll the finger: {result_text}")
 
     conn = get_db()
     cur = conn.cursor()
@@ -233,7 +253,12 @@ def delete_enrollment(student_id=None, camera_id=None, fingerprint_id=None, time
     base_url = _device_base_url(row)
     device_msg = ""
     try:
-        resp = requests.get(f"{base_url}/delete", params={"id": row["template_id"]}, timeout=timeout)
+        resp = requests.get(
+            f"{base_url}/delete",
+            params={"id": row["template_id"]},
+            headers={"Connection": "close"},
+            timeout=timeout
+        )
         device_msg = resp.text
     except requests.RequestException as e:
         logger.warning(f"Could not reach device to delete slot #{row['template_id']}: {e}")
@@ -300,3 +325,45 @@ def lookup_student_by_template(camera_id, template_id, db_pool=None):
                 conn.close()
             except Exception:
                 pass
+
+VALID_ATTENDANCE_MODES = ("FACE_ONLY", "FINGERPRINT_ONLY", "DUAL_MODE")
+
+
+def _device_request(camera_id, path, params=None, timeout=3):
+    cursor = get_cursor()
+    cursor.execute("SELECT id, rtsp_url FROM cameras WHERE id = %s", (camera_id,))
+    cam = cursor.fetchone()
+    if not cam:
+        raise FingerprintError("Camera/device not found.")
+    base_url = _device_base_url(cam)
+    try:
+        resp = requests.get(
+            f"{base_url}{path}",
+            params=params,
+            headers={"Connection": "close"},
+            timeout=timeout
+        )
+        resp.raise_for_status()
+        return resp
+    except requests.RequestException as e:
+        raise FingerprintError(f"Could not reach device ({base_url}): {e}")
+
+
+def get_device_status(camera_id):
+    return _device_request(camera_id, "/status").json()
+
+
+def set_attendance_mode(camera_id, mode):
+    mode = (mode or "").upper()
+    if mode not in VALID_ATTENDANCE_MODES:
+        raise FingerprintError("Mode must be FACE_ONLY, FINGERPRINT_ONLY or DUAL_MODE.")
+    _device_request(camera_id, "/set-attendance-mode", {"mode": mode})
+    return mode
+
+
+def get_last_scan(camera_id):
+    data = _device_request(camera_id, "/last-scan").json()
+    data["student"] = None
+    if data.get("matched") and data.get("id"):
+        data["student"] = lookup_student_by_template(camera_id, data["id"])
+    return data

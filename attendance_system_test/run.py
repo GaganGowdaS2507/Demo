@@ -29,5 +29,5 @@ if __name__ == "__main__":
         port=5000,
         debug=False,
         threaded=True,
-        use_reloader=True,
+        use_reloader=False,
     )

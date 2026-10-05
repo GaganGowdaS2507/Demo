@@ -62,7 +62,9 @@
                         <th>Subject</th>
                         <th>Type</th>
                         <th>Faculty</th>
-                        <th>Total</th>
+                        <th>Held</th>
+                        <th>Semester total</th>
+                        <th>Left</th>
                         <th>Present</th>
                         <th>Absent</th>
                         <th>Attendance %</th>
@@ -77,6 +79,8 @@
                         <td><span class="badge bg-secondary">{{ s.subject_type }}</span></td>
                         <td><small>{{ s.faculty_name }}</small></td>
                         <td>{{ s.total }}</td>
+                        <td>{{ s.planned_total }}</td>
+                        <td>{{ s.remaining }}</td>
                         <td class="text-success fw-bold">{{ s.present }}</td>
                         <td class="text-danger">{{ s.absent }}</td>
                         <td>
@@ -85,9 +89,18 @@
                                     <div class="progress-bar bg-{{ s.color }}"
                                          style="width: {{ s.percentage }}%">
                                         {{ s.percentage }}%
-                                    </div>
                                 </div>
                             </div>
+                            {% if s.status == 'no_classes' %}
+                            <small class="text-muted">No classes yet</small>
+                            {% elif s.percentage < 75 %}
+                            <small class="text-danger">
+                                {% if s.can_reach %}Attend the next {{ s.must_attend }} of {{ s.remaining }} left
+                                {% else %}Cannot reach 75%{% endif %}
+                            </small>
+                            {% else %}
+                            <small class="text-muted">Can miss {{ s.can_miss }} more</small>
+                            {% endif %}
                         </td>
                         <td>
                             <a href="{{ url_for('student.subject_history', subject_id=s.subject_id) }}"

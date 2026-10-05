@@ -474,7 +474,8 @@ def extract_identifiers_from_image(image_path: str) -> list[str]:
     import time
 
     OCR_FALLBACK_MODELS = [
-        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",   # CONFIRMED WORKING ✓ (returns 842 chars)
+        "google/gemma-4-26b-a4b-it:free",
+           "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",   # CONFIRMED WORKING ✓ (returns 842 chars)
         # All other free models tested and found invalid on this account:
         # meta/llama-3.2-11b-vision-instruct:free → 400 invalid model ID
         # google/gemini-2.0-flash-exp:free         → 404 no endpoints
@@ -484,8 +485,8 @@ def extract_identifiers_from_image(image_path: str) -> list[str]:
         # qwen/qwen2.5-vl-7b-instruct:free         → 400 invalid
         # moondream/moondream2:free                → 400 invalid
     ]
-    MAX_RETRIES_PER_MODEL = 4    # retry nvidia up to 4x on transient connection errors
-    RETRY_SLEEP = 5              # seconds to wait between retries
+    MAX_RETRIES_PER_MODEL = 2   # retry google/gemma-4-26b-a4b-it:free up to 1x on transient connection errors
+    RETRY_SLEEP = 3          # seconds to wait between retries
 
     raw = None
     last_error = None

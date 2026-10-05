@@ -12,6 +12,7 @@ from flask_login import current_user, login_required
 from core.db import get_db, get_cursor
 from auth.helpers import student_required, log_audit, get_client_ip
 from api.admin.electives import create_elective_group, check_registration_conflict
+from services.semester_service import period_for_section
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,13 @@ def _get_student(cursor):
     return cursor.fetchone()
 
 
-def _get_active_period(cursor):
-    cursor.execute("SELECT id, name, sem_number FROM academic_periods WHERE is_active = 1 LIMIT 1")
-    return cursor.fetchone()
+def _get_student_period(cursor, student):
+    if not student or not student["section_id"]:
+        return None
+    try:
+        return period_for_section(cursor, student["section_id"])
+    except ValueError:
+        return None
 
 
 def _get_student_cluster(cursor, section_id):
@@ -60,7 +65,7 @@ def registration_home():
     if not student:
         return render_template("student/registration.html", error="Student profile not found.")
 
-    period = _get_active_period(cursor)
+    period = _get_student_period(cursor, student)
     if not period:
         return render_template("student/registration.html", error="No active academic period.")
 
@@ -154,7 +159,7 @@ def register():
         if not student:
             return jsonify({"success": False, "message": "Student profile not found."}), 400
 
-        period = _get_active_period(cursor)
+        period = _get_student_period(cursor, student)
         if not period:
             return jsonify({"success": False, "message": "No active academic period."}), 400
 

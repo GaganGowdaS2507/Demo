@@ -432,7 +432,8 @@ def faculty_start_recognition(session_id):
 
     cam = None
 
-    # Ensure attendance rows exist
+    # Ensure attendance rows exist (elective class: only the group's students)
+    from services.roster_service import roster_for_session
     cursor = get_cursor()
     cursor.execute("SELECT section_id FROM sessions WHERE id = %s", (session_id,))
     sess = cursor.fetchone()
@@ -440,15 +441,16 @@ def faculty_start_recognition(session_id):
     if not sess:
         flash("Session not found.", "danger")
         return redirect(url_for("faculty.dashboard"))
-    cursor.execute(
-        """
-        INSERT IGNORE INTO attendance (session_id, student_id, usn, status, method, marked_at)
-        SELECT %s, st.id, st.usn, 'absent', 'system', NOW()
-        FROM students st
-        WHERE st.section_id = %s
-        """,
-        (session_id, sess["section_id"])
-    )   
+
+    roster = roster_for_session(cursor, session_id)
+    if roster:
+        cursor.executemany(
+            """
+            INSERT IGNORE INTO attendance (session_id, student_id, usn, status, method, marked_at)
+            VALUES (%s, %s, %s, 'absent', 'system', NOW())
+            """,
+            [(session_id, r["id"], r["usn"]) for r in roster]
+        ) 
 
     try:
         import app as _app
@@ -1584,4 +1586,4 @@ def web_voice_batch_mark(session_id):
         "ambiguous": batch_res["ambiguous"],
         "not_found": batch_res["not_found"],
         "marked_at": now_time
-    })
+    })

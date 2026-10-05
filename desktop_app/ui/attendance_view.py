@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QFileDialog,
     QMessageBox, QFrame, QProgressBar, QComboBox, QLineEdit,
-    QSplitter, QScrollArea, QCheckBox, QSlider
+    QSplitter, QScrollArea, QCheckBox, QSlider,QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QImage, QPixmap, QColor
@@ -27,6 +27,28 @@ except ImportError:
     from ..database.local_store import get_local_store
     from ..network.api_client import get_api_client
 
+def make_stat_card(label_text, value_text):
+    card = QFrame()
+    card.setObjectName("card")
+
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(12, 8, 12, 8)
+    layout.setSpacing(2)
+
+    value_label = QLabel(value_text)
+    value_label.setStyleSheet(
+        "font-size: 20px; font-weight: 700; color: #f8fafc;"
+    )
+
+    name_label = QLabel(label_text)
+    name_label.setStyleSheet(
+        "font-size: 11px; color: #94a3b8;"
+    )
+
+    layout.addWidget(value_label)
+    layout.addWidget(name_label)
+
+    return card, value_label
 
 class RecognitionWorker(QThread):
     progress = pyqtSignal(int, str)
@@ -60,9 +82,13 @@ class RecognitionWorker(QThread):
 class AttendanceView(QWidget):
     attendance_submitted = pyqtSignal()
 
-    def __init__(self, engine, parent=None):
+    def __init__(self, engine, parent=None, user_profile=None):
+        if isinstance(parent, dict) and user_profile is None:
+            user_profile = parent
+            parent = None
         super().__init__(parent)
         self.engine = engine
+        self.user_profile = user_profile or {}
         self.store = get_local_store()
         self.api_client = get_api_client()
 
@@ -100,8 +126,15 @@ class AttendanceView(QWidget):
 
         top_layout.addStretch()
 
-        self.hw_label = QLabel(f"Edge AI: {getattr(self.engine, 'device', 'CPU')}", top_card)
+        self.hw_label = QLabel(
+            f"Edge AI: {getattr(self.engine, 'device', 'CPU')}",
+            top_card
+        )
         self.hw_label.setObjectName("badge")
+        self.hw_label.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed
+        )
         top_layout.addWidget(self.hw_label)
 
         main_layout.addWidget(top_card)
@@ -134,6 +167,10 @@ class AttendanceView(QWidget):
 
         self.photo_info_lbl = QLabel("No photos selected. Please add 1 to 3 wide classroom photos.", left_widget)
         left_layout.addWidget(self.photo_info_lbl)
+
+        self.thumb_strip = QHBoxLayout()
+        self.thumb_strip.setSpacing(6)
+        left_layout.addLayout(self.thumb_strip)
 
         # Image preview scroll area
         self.image_scroll = QScrollArea(left_widget)
@@ -185,22 +222,22 @@ class AttendanceView(QWidget):
         right_layout.setSpacing(10)
 
         # Stats Cards Row
+        # Stats Cards Row
         stats_layout = QHBoxLayout()
-        self.stat_total = QLabel("Total: 0", right_widget)
-        self.stat_total.setObjectName("card")
-        stats_layout.addWidget(self.stat_total)
+        stats_layout.setSpacing(8)
 
-        self.stat_present = QLabel("Present: 0", right_widget)
-        self.stat_present.setStyleSheet("color: #22c55e; font-weight: bold; padding: 6px; background-color: #1e293b; border-radius: 6px;")
-        stats_layout.addWidget(self.stat_present)
+        self.card_total, self.stat_total = make_stat_card("TOTAL", "0")
+        self.card_present, self.stat_present = make_stat_card("PRESENT", "0")
+        self.card_absent, self.stat_absent = make_stat_card("ABSENT", "0")
+        self.card_unknown, self.stat_unknown = make_stat_card("UNRECOGNIZED", "0")
 
-        self.stat_absent = QLabel("Absent: 0", right_widget)
-        self.stat_absent.setStyleSheet("color: #ef4444; font-weight: bold; padding: 6px; background-color: #1e293b; border-radius: 6px;")
-        stats_layout.addWidget(self.stat_absent)
-
-        self.stat_unknown = QLabel("Unrecognized: 0", right_widget)
-        self.stat_unknown.setStyleSheet("color: #f59e0b; font-weight: bold; padding: 6px; background-color: #1e293b; border-radius: 6px;")
-        stats_layout.addWidget(self.stat_unknown)
+        for card in (
+            self.card_total,
+            self.card_present,
+            self.card_absent,
+            self.card_unknown
+        ):
+            stats_layout.addWidget(card)
 
         right_layout.addLayout(stats_layout)
 
@@ -247,7 +284,10 @@ class AttendanceView(QWidget):
         right_layout.addLayout(bottom_row)
         splitter.addWidget(right_widget)
 
-        splitter.setSizes([550, 650])
+        splitter.setStretchFactor(0, 55)
+        splitter.setStretchFactor(1, 45)
+        splitter.setSizes([700, 580])
+
         main_layout.addWidget(splitter)
 
     def load_sessions(self, sessions_list=None):
@@ -365,7 +405,12 @@ class AttendanceView(QWidget):
         )
         if files:
             self.selected_photo_paths = (self.selected_photo_paths + files)[:3]
-            self.photo_info_lbl.setText(f"{len(self.selected_photo_paths)} classroom photo(s) selected.")
+
+            self.photo_info_lbl.setText(
+                f"{len(self.selected_photo_paths)} classroom photo(s) selected."
+            )
+
+            self._refresh_thumbnails()
             self._display_first_image(self.selected_photo_paths[0])
 
     def _on_capture_webcam(self):
@@ -383,6 +428,8 @@ class AttendanceView(QWidget):
                 cv2.imwrite(tmp_path, frame)
                 self.selected_photo_paths = [tmp_path]
                 self.photo_info_lbl.setText("1 webcam capture ready.")
+
+                self._refresh_thumbnails()
                 self._display_first_image(tmp_path)
             else:
                 QMessageBox.warning(self, "Capture Failed", "Could not read frame from webcam.")
@@ -392,10 +439,46 @@ class AttendanceView(QWidget):
     def _on_clear_photos(self):
         self.selected_photo_paths = []
         self.annotated_images = []
+
         self.photo_info_lbl.setText("Photos cleared.")
-        self.image_lbl.setText("Classroom photo preview with detected faces will appear here.")
+
+        self.image_lbl.setText(
+            "Classroom photo preview with detected faces will appear here."
+        )
         self.image_lbl.setPixmap(QPixmap())
 
+        self._refresh_thumbnails()
+
+    def _refresh_thumbnails(self):
+        while self.thumb_strip.count():
+            item = self.thumb_strip.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        for path in self.selected_photo_paths:
+            label = QLabel()
+
+            pix = QPixmap(path)
+
+            if not pix.isNull():
+                pix = pix.scaled(
+                    90,
+                    60,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+
+                label.setPixmap(pix)
+
+            label.setFixedSize(90, 60)
+            label.setStyleSheet(
+                "border: 1px solid #334155; border-radius: 4px;"
+            )
+
+            self.thumb_strip.addWidget(label)
+
+            
     def _display_first_image(self, path):
         pix = QPixmap(path)
         if not pix.isNull():
@@ -575,14 +658,25 @@ class AttendanceView(QWidget):
 
     def _update_stats(self):
         total = len(self.current_roster)
-        present = sum(1 for v in self.student_status_map.values() if v["status"] == "present")
-        absent = total - present
-        unknown = len(self.recognition_results.get("unrecognized_faces", [])) if self.recognition_results else 0
 
-        self.stat_total.setText(f"Total: {total}")
-        self.stat_present.setText(f"Present: {present}")
-        self.stat_absent.setText(f"Absent: {absent}")
-        self.stat_unknown.setText(f"Unrecognized: {unknown}")
+        present = sum(
+            1
+            for v in self.student_status_map.values()
+            if v["status"] == "present"
+        )
+
+        absent = total - present
+
+        unknown = (
+            len(self.recognition_results.get("unrecognized_faces", []))
+            if self.recognition_results
+            else 0
+        )
+
+        self.stat_total.setText(str(total))
+        self.stat_present.setText(str(present))
+        self.stat_absent.setText(str(absent))
+        self.stat_unknown.setText(str(unknown))
 
     def _on_submit_attendance(self):
         if not self.selected_session_id:

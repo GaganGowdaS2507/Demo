@@ -88,3 +88,16 @@ jest.mock('react-native-vision-camera', () => ({
   useCameraDevice: jest.fn().mockReturnValue({ id: 'back' }),
   useCameraPermission: jest.fn().mockReturnValue({ hasPermission: true, requestPermission: jest.fn() }),
 }));
+
+jest.mock('@react-native-voice/voice', () => ({
+  onSpeechStart: jest.fn(),
+  onSpeechRecognized: jest.fn(),
+  onSpeechEnd: jest.fn(),
+  onSpeechError: jest.fn(),
+  onSpeechResults: jest.fn(),
+  onSpeechPartialResults: jest.fn(),
+  start: jest.fn().mockResolvedValue(undefined),
+  stop: jest.fn().mockResolvedValue(undefined),
+  destroy: jest.fn().mockResolvedValue(undefined),
+  removeAllListeners: jest.fn(),
+}));

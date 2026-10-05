@@ -23,7 +23,9 @@ from flask_login import current_user, login_required
 
 from core.db import get_db, get_cursor
 from auth.helpers import admin_required, log_audit, get_client_ip
+from services.timetable_engine import create_unplanned_session
 from utils.stream_source import normalize_stream_source, InvalidStreamSource
+from services.timetable_engine import create_unplanned_session
 from api.admin.dashboard import _auto_create_todays_sessions
 logger = logging.getLogger(__name__)
 
@@ -220,13 +222,13 @@ def dashboard():
     cursor.execute(f"""
         SELECT
             COUNT(DISTINCT s.id)                                                    AS total_sessions,
-            SUM(CASE WHEN s.status NOT IN ('dismissed','cancelled') AND CURTIME() < s.start_time THEN 1 ELSE 0 END) AS scheduled_count,
-            SUM(CASE WHEN s.status NOT IN ('dismissed','cancelled') AND CURTIME() BETWEEN s.start_time AND s.end_time THEN 1 ELSE 0 END) AS active_count,
-            SUM(CASE WHEN s.status NOT IN ('dismissed','cancelled') AND CURTIME() > s.end_time THEN 1 ELSE 0 END) AS completed_count,
+            SUM(CASE WHEN s.status NOT IN ('dismissed','cancelled') AND (s.session_date > CURDATE() OR (s.session_date = CURDATE() AND CURTIME() < s.start_time)) THEN 1 ELSE 0 END) AS scheduled_count,
+            SUM(CASE WHEN s.status NOT IN ('dismissed','cancelled') AND s.session_date = CURDATE() AND CURTIME() BETWEEN s.start_time AND s.end_time THEN 1 ELSE 0 END) AS active_count,
+            SUM(CASE WHEN s.status NOT IN ('dismissed','cancelled') AND (s.session_date < CURDATE() OR (s.session_date = CURDATE() AND CURTIME() > s.end_time)) THEN 1 ELSE 0 END) AS completed_count,
             SUM(CASE WHEN s.status IN ('dismissed','cancelled') THEN 1 ELSE 0 END) AS cancelled_count,
             SUM(s.source = 'manual')                                                AS manual_sessions,
             SUM(s.source = 'timetable')                                             AS timetable_sessions,
-            ROUND(AVG(va.attendance_pct), 1)                                        AS avg_attendance_pct
+            ROUND(AVG(CASE WHEN s.status IN ('completed','active') THEN va.attendance_pct END), 1) AS avg_attendance_pct
         FROM      sessions         s
         JOIN      session_sections ss  ON ss.session_id  = s.id
         JOIN      sections         sec ON sec.id          = ss.section_id
@@ -243,7 +245,7 @@ def dashboard():
             d.code                                                                  AS dept_code,
             d.name                                                                  AS dept_name,
             COUNT(DISTINCT s.id)                                                    AS session_count,
-            ROUND(AVG(va.attendance_pct), 1)                                        AS avg_pct
+            ROUND(AVG(CASE WHEN s.status IN ('completed','active') THEN va.attendance_pct END), 1) AS avg_pct                                  AS avg_pct
         FROM      sessions         s
         JOIN      session_sections ss  ON ss.session_id  = s.id
         JOIN      sections         sec ON sec.id          = ss.section_id
@@ -447,42 +449,49 @@ def create_session():
     try:
         cursor = conn.cursor(dictionary=True, buffered=True)
 
-        primary_section_id = selected_sections[0] if selected_sections else None
+        # primary_section_id = selected_sections[0] if selected_sections else None
 
-        cursor.execute("""
-            INSERT INTO sessions (
-                section_id, subject_id, elective_group_id, faculty_id,
-                session_date, start_time, end_time,
-                status, session_type, source, scope,
-                title, room, camera_id, created_by, created_at
-            ) VALUES (
-                %s, %s, %s, %s,
-                %s, %s, %s,
-                'scheduled', %s, 'manual', %s,
-                %s, %s, %s, %s, NOW()
-            )
-        """, (
-            primary_section_id, subject_id, elective_group_id, faculty_id,
-            session_date, start_time_str, end_time_str,
-            session_type, scope,
-            title, room, camera_id, current_user.id,
-        ))
-        session_id = cursor.lastrowid
+        # cursor.execute("""
+        #     INSERT INTO sessions (
+        #         section_id, subject_id, elective_group_id, faculty_id,
+        #         session_date, start_time, end_time,
+        #         status, session_type, source, scope,
+        #         title, room, camera_id, created_by, created_at
+        #     ) VALUES (
+        #         %s, %s, %s, %s,
+        #         %s, %s, %s,
+        #         'scheduled', %s, 'manual', %s,
+        #         %s, %s, %s, %s, NOW()
+        #     )
+        # """, (
+        #     primary_section_id, subject_id, elective_group_id, faculty_id,
+        #     session_date, start_time_str, end_time_str,
+        #     session_type, scope,
+        #     title, room, camera_id, current_user.id,
+        # ))
+        # session_id = cursor.lastrowid
 
-        if selected_sections:
-            junction_rows = [(session_id, sid, current_user.id) for sid in selected_sections]
-            cursor.executemany("""
-                INSERT IGNORE INTO session_sections (session_id, section_id, added_by)
-                VALUES (%s, %s, %s)
-            """, junction_rows)
+        # if selected_sections:
+        #     junction_rows = [(session_id, sid, current_user.id) for sid in selected_sections]
+        #     cursor.executemany("""
+        #         INSERT IGNORE INTO session_sections (session_id, section_id, added_by)
+        #         VALUES (%s, %s, %s)
+        #     """, junction_rows)
 
-        roster = resolve_session_roster(cursor, selected_sections, elective_group_id)
-        attendance_rows = [(session_id, stu["id"], stu["usn"]) for stu in roster]
-        cursor.executemany("""
-            INSERT IGNORE INTO attendance
-                (session_id, student_id, usn, status, method, marked_at)
-            VALUES (%s, %s, %s, 'absent', 'system', NOW())
-        """, attendance_rows)
+        # roster = resolve_session_roster(cursor, selected_sections, elective_group_id)
+        # attendance_rows = [(session_id, stu["id"], stu["usn"]) for stu in roster]
+        # cursor.executemany("""
+        #     INSERT IGNORE INTO attendance
+        #         (session_id, student_id, usn, status, method, marked_at)
+        #     VALUES (%s, %s, %s, 'absent', 'system', NOW())
+        # """, attendance_rows)
+
+        session_id, roster = create_unplanned_session(
+            cursor, section_ids=selected_sections, subject_id=subject_id,
+            elective_group_id=elective_group_id, faculty_id=faculty_id,
+            session_date=session_date, start_time=start_time_str, end_time=end_time_str,
+            session_type=session_type, title=title, room=room, camera_id=camera_id,
+            scope=scope, created_by=current_user.id)
 
         log_audit(
             user_id=current_user.id,
@@ -669,6 +678,11 @@ def edit_session(session_id):
     if not session_row:
         flash("Session not found or is timetable-generated (not editable here).", "warning")
         return redirect(url_for("sessions.dashboard"))
+
+    if session_row.get("planned_session_id") or session_row.get("elective_group_id"):
+        flash("This class belongs to the plan or to an elective group, so it cannot be "
+              "edited here. Use the Class Changes page.", "warning")
+        return redirect(url_for("sessions.session_detail", session_id=session_id))
 
     if session_row["status"] in ("completed", "dismissed", "cancelled"):
         flash("Cannot edit a completed or cancelled session.", "warning")
@@ -946,32 +960,37 @@ def dismiss_session(session_id):
 
     return redirect(url_for("sessions.session_detail", session_id=session_id))
 
-def resolve_session_roster(cursor, section_ids, elective_group_id=None):
-    """
-    Single source of truth for "who is expected in this session".
-    - elective_group_id set  -> roster = elective_group_members (subset of students,
-                                 possibly spanning multiple home sections)
-    - elective_group_id None -> roster = every student in the selected section(s)
-                                 (existing whole-section-merge behaviour, unchanged)
-    """
-    if elective_group_id:
-        cursor.execute(
-            """
-            SELECT s.id, s.usn
-            FROM elective_group_members egm
-            JOIN students s ON s.id = egm.student_id
-            WHERE egm.elective_group_id = %s AND egm.is_active = 1
-            """,
-            (elective_group_id,)
-        )
-        return cursor.fetchall()
+# def resolve_session_roster(cursor, section_ids, elective_group_id=None):
+#     """
+#     Single source of truth for "who is expected in this session".
+#     - elective_group_id set  -> roster = elective_group_members (subset of students,
+#                                  possibly spanning multiple home sections)
+#     - elective_group_id None -> roster = every student in the selected section(s)
+#                                  (existing whole-section-merge behaviour, unchanged)
+#     """
+#     if elective_group_id:
+#         cursor.execute(
+#             """
+#             SELECT s.id, s.usn
+#             FROM elective_group_members egm
+#             JOIN students s ON s.id = egm.student_id
+#             WHERE egm.elective_group_id = %s AND egm.is_active = 1
+#             """,
+#             (elective_group_id,)
+#         )
+#         return cursor.fetchall()
 
-    fmt = ",".join(["%s"] * len(section_ids))
-    cursor.execute(
-        f"SELECT id, usn FROM students WHERE section_id IN ({fmt})",
-        tuple(section_ids)
-    )
-    return cursor.fetchall()
+#     fmt = ",".join(["%s"] * len(section_ids))
+#     cursor.execute(
+#         f"SELECT id, usn FROM students WHERE section_id IN ({fmt})",
+#         tuple(section_ids)
+#     )
+#     return cursor.fetchall()
+
+def resolve_session_roster(cursor, section_ids, elective_group_id=None):
+    """Kept for old callers. The real logic is in services/roster_service.py."""
+    from services.roster_service import get_roster
+    return get_roster(cursor, section_ids, elective_group_id)
 
 @sessions_bp.route("/<int:session_id>/assign-camera", methods=["POST"])
 @login_required

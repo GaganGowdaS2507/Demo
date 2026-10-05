@@ -105,34 +105,265 @@
 
     <div class="card-body">
 
-        <div class="d-flex justify-content-between align-items-center">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
 
             <div>
 
                 <h5 class="fw-bold mb-1">
-
-                    Subject Management
-
+                    <i class="bi bi-journal-bookmark text-primary"></i> Subject Management
                 </h5>
 
                 <small class="text-muted">
-
-                    Create and manage subjects globally
-
+                    Create individual subjects or bulk import full departmental curricula via CSV
                 </small>
 
             </div>
 
-            <button
-                class="btn btn-success"
-                data-bs-toggle="collapse"
-                data-bs-target="#addSubjectForm">
+            <div class="d-flex gap-2 flex-wrap">
 
-                <i class="bi bi-plus-circle"></i>
+                <a href="{{ url_for('academic.download_subject_template') }}" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1 shadow-sm">
+                    <i class="bi bi-file-earmark-arrow-down"></i>
+                    <span>Download CSV Template</span>
+                </a>
 
-                Add Subject
+                <button
+                    class="btn btn-primary btn-sm d-flex align-items-center gap-1 shadow-sm"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#bulkUploadSubjectForm">
 
-            </button>
+                    <i class="bi bi-cloud-arrow-up"></i>
+                    <span>Bulk Upload CSV</span>
+
+                </button>
+
+                <button
+                    class="btn btn-success btn-sm d-flex align-items-center gap-1 shadow-sm"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#addSubjectForm">
+
+                    <i class="bi bi-plus-circle"></i>
+                    <span>Add Single Subject</span>
+
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<!-- BULK UPLOAD CSV FORM -->
+<div class="collapse mb-3" id="bulkUploadSubjectForm">
+
+    <div class="card shadow-sm border-primary">
+
+        <div class="card-header bg-primary bg-opacity-10 border-primary d-flex justify-content-between align-items-center flex-wrap gap-2">
+
+            <h5 class="mb-0 fw-bold text-primary">
+                <i class="bi bi-file-earmark-spreadsheet me-1"></i> Bulk Upload Subjects (CSV)
+            </h5>
+
+            <span class="badge bg-primary">
+                <i class="bi bi-diagram-3 me-1"></i> Automatic Department &amp; Semester Routing
+            </span>
+
+        </div>
+
+        <div class="card-body">
+
+            <form
+                method="POST"
+                action="{{ url_for('academic.bulk_upload_subjects') }}"
+                enctype="multipart/form-data"
+                id="subjectsBulkUploadForm">
+
+                <div class="row g-4">
+
+                    <!-- Left Column: Upload Area -->
+                    <div class="col-lg-6">
+
+                        <label class="form-label fw-semibold">
+                            Upload Subjects CSV File <span class="text-danger">*</span>
+                        </label>
+
+                        <div id="subjectDropZone"
+                             class="border border-2 border-dashed rounded-3 p-4 text-center position-relative bg-light"
+                             style="border-color:#0d6efd !important; cursor:pointer; min-height: 170px; display:flex; flex-direction:column; justify-content:center; align-items:center; transition: all 0.2s ease;">
+
+                            <input
+                                type="file"
+                                name="file"
+                                id="subjectCsvInput"
+                                class="position-absolute top-0 start-0 w-100 h-100 opacity-0"
+                                accept=".csv"
+                                required
+                                style="cursor:pointer;">
+
+                            <div id="subjectDropDefault">
+                                <i class="bi bi-cloud-arrow-up text-primary fs-1 mb-2 d-block"></i>
+                                <div class="fw-semibold text-dark">
+                                    Drag &amp; drop your CSV file here, or <span class="text-primary text-decoration-underline">browse</span>
+                                </div>
+                                <small class="text-muted d-block mt-1">Accepts standard .csv UTF-8 / Excel CSV files</small>
+                            </div>
+
+                            <div id="subjectDropSelected" class="d-none">
+                                <i class="bi bi-filetype-csv text-success fs-1 mb-2 d-block"></i>
+                                <div class="fw-bold text-success" id="subjectFileName">selected_file.csv</div>
+                                <small class="text-muted" id="subjectFileSize">0 KB</small>
+                                <div class="mt-2">
+                                    <span class="badge bg-secondary-subtle text-secondary border">
+                                        Click or drag another file to replace
+                                    </span>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <div class="mt-3 p-3 bg-light rounded border">
+                            <div class="form-check form-switch">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    name="update_existing"
+                                    value="1"
+                                    id="updateExistingCheck"
+                                    checked>
+                                <label class="form-check-label fw-semibold" for="updateExistingCheck">
+                                    Update existing subjects if Subject Code matches
+                                </label>
+                            </div>
+                            <small class="text-muted d-block mt-1">
+                                When enabled, already existing subjects in the database will have their Name, Department, Semester, Credits, Subject Type, and Offering Mode updated to match the CSV.
+                            </small>
+                        </div>
+
+                        <div class="d-flex gap-2 mt-3 flex-wrap">
+
+                            <button type="submit" class="btn btn-primary px-4 fw-semibold shadow-sm" id="uploadSubmitBtn">
+                                <i class="bi bi-cloud-arrow-up me-1"></i> Upload &amp; Import Subjects
+                            </button>
+
+                            <a href="{{ url_for('academic.download_subject_template') }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-download me-1"></i> Download Template
+                            </a>
+
+                            <button type="button" class="btn btn-outline-dark" data-bs-toggle="collapse" data-bs-target="#bulkUploadSubjectForm">
+                                Cancel
+                            </button>
+
+                        </div>
+
+                    </div>
+
+                    <!-- Right Column: CSV Guide & Department Reference -->
+                    <div class="col-lg-6">
+
+                        <div class="card bg-body-tertiary border-0 h-100">
+
+                            <div class="card-body">
+
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <h6 class="fw-bold mb-0 text-dark">
+                                        <i class="bi bi-info-circle text-info me-1"></i> Expected CSV Column Headers
+                                    </h6>
+                                    <button type="button" class="btn btn-sm btn-outline-primary" id="copyCsvExampleBtn" onclick="copyCsvExample()">
+                                        <i class="bi bi-clipboard me-1"></i> Copy Example CSV
+                                    </button>
+                                </div>
+
+                                <p class="small text-muted mb-2">
+                                    Your CSV file should have the following headers on row 1 (columns are matched flexibly):
+                                </p>
+
+                                <div class="table-responsive mb-3">
+                                    <table class="table table-sm table-bordered bg-white small mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Header</th>
+                                                <th>Required</th>
+                                                <th>Valid Values / Description</th>
+                                                <th>Example</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td><code>subject_code</code></td>
+                                                <td><span class="badge bg-danger">Yes</span></td>
+                                                <td>Unique course code</td>
+                                                <td><code>21CS51</code></td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>subject_name</code></td>
+                                                <td><span class="badge bg-danger">Yes</span></td>
+                                                <td>Full course/subject name</td>
+                                                <td><code>Database Systems</code></td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>department</code></td>
+                                                <td><span class="badge bg-secondary">Optional</span></td>
+                                                <td>Department code (e.g. CSE) or Name</td>
+                                                <td><code>CSE</code></td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>semester</code></td>
+                                                <td><span class="badge bg-secondary">Optional</span></td>
+                                                <td>Semester number (1 to 8)</td>
+                                                <td><code>5</code></td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>credits</code></td>
+                                                <td><span class="badge bg-secondary">Optional</span></td>
+                                                <td>Credit hours (default: 0)</td>
+                                                <td><code>4</code></td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>subject_type</code></td>
+                                                <td><span class="badge bg-secondary">Optional</span></td>
+                                                <td>Theory, Lab, Theory-Lab-Integrated</td>
+                                                <td><code>Theory</code></td>
+                                            </tr>
+                                            <tr>
+                                                <td><code>offering_mode</code></td>
+                                                <td><span class="badge bg-secondary">Optional</span></td>
+                                                <td>regular, professional_elective, open_elective</td>
+                                                <td><code>regular</code></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div>
+                                    <div class="small fw-semibold text-secondary mb-1">
+                                        Configured Department Codes in System:
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-1">
+                                        {% for d in departments %}
+                                        <span class="badge bg-white text-dark border shadow-xs" title="{{ d.name }}">
+                                            <strong>{{ d.code }}</strong> {% if d.name %}<span class="text-muted">({{ d.name }})</span>{% endif %}
+                                        </span>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+
+                                <textarea id="csvExampleContent" class="d-none">subject_code,subject_name,department,semester,credits,subject_type,offering_mode
+21CS51,Management and Entrepreneurship,CSE,5,3,Theory,regular
+21CS52,Computer Networks & Security,CSE,5,4,Theory,regular
+21CS53,Database Management Systems,CSE,5,4,Theory,regular
+21CSL56,Computer Networks Laboratory,CSE,5,2,Lab,regular
+21CSL57,DBMS Laboratory with Mini Project,CSE,5,2,Lab,regular</textarea>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </form>
 
         </div>
 
@@ -742,5 +973,124 @@
 
 </div>
 {% endif %}
+
+<script>
+// Copy CSV Example to clipboard
+function copyCsvExample() {
+    const exampleText = document.getElementById('csvExampleContent').value;
+    const copyBtn = document.getElementById('copyCsvExampleBtn');
+    
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(exampleText).then(onCopied).catch(fallbackCopy);
+    } else {
+        fallbackCopy();
+    }
+
+    function onCopied() {
+        const origHtml = copyBtn.innerHTML;
+        copyBtn.innerHTML = '<i class="bi bi-check-lg text-success"></i> Copied!';
+        copyBtn.classList.remove('btn-outline-primary');
+        copyBtn.classList.add('btn-success', 'text-white');
+        setTimeout(() => {
+            copyBtn.innerHTML = origHtml;
+            copyBtn.classList.remove('btn-success', 'text-white');
+            copyBtn.classList.add('btn-outline-primary');
+        }, 2000);
+    }
+
+    function fallbackCopy() {
+        const textarea = document.createElement('textarea');
+        textarea.value = exampleText;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            onCopied();
+        } catch (err) {
+            alert('Failed to copy. Please manually copy the example from the table.');
+        }
+        document.body.removeChild(textarea);
+    }
+}
+
+// Subject CSV Dropzone Handler
+document.addEventListener('DOMContentLoaded', function () {
+    const dropZone = document.getElementById('subjectDropZone');
+    const fileInput = document.getElementById('subjectCsvInput');
+    const dropDefault = document.getElementById('subjectDropDefault');
+    const dropSelected = document.getElementById('subjectDropSelected');
+    const fileNameSpan = document.getElementById('subjectFileName');
+    const fileSizeSpan = document.getElementById('subjectFileSize');
+    const uploadForm = document.getElementById('subjectsBulkUploadForm');
+    const submitBtn = document.getElementById('uploadSubmitBtn');
+
+    if (!dropZone || !fileInput) return;
+
+    function handleFile(file) {
+        if (!file) return;
+        if (!file.name.toLowerCase().endsWith('.csv')) {
+            alert('Please select a valid CSV (.csv) file.');
+            fileInput.value = '';
+            dropDefault.classList.remove('d-none');
+            dropSelected.classList.add('d-none');
+            return;
+        }
+
+        fileNameSpan.textContent = file.name;
+        const sizeKb = (file.size / 1024).toFixed(1);
+        fileSizeSpan.textContent = sizeKb >= 1024 ? (sizeKb / 1024).toFixed(2) + ' MB' : sizeKb + ' KB';
+
+        dropDefault.classList.add('d-none');
+        dropSelected.classList.remove('d-none');
+        dropZone.style.borderColor = '#198754';
+        dropZone.style.backgroundColor = '#f8fff9';
+    }
+
+    fileInput.addEventListener('change', function () {
+        if (this.files && this.files[0]) {
+            handleFile(this.files[0]);
+        }
+    });
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.style.borderColor = '#0b5ed7';
+            dropZone.style.backgroundColor = '#e7f1ff';
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!fileInput.files || !fileInput.files[0]) {
+                dropZone.style.borderColor = '#0d6efd';
+                dropZone.style.backgroundColor = '#f8f9fa';
+            }
+        }, false);
+    });
+
+    dropZone.addEventListener('drop', function (e) {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        if (files && files.length > 0) {
+            fileInput.files = files;
+            handleFile(files[0]);
+        }
+    });
+
+    if (uploadForm && submitBtn) {
+        uploadForm.addEventListener('submit', function () {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Importing Subjects...';
+        });
+    }
+});
+</script>
 
 {% endblock %}

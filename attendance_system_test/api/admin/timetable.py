@@ -25,7 +25,7 @@ import csv
 import logging
 from datetime import datetime
 from auth.helpers import hash_password
-
+from services.timetable_engine import replan_section, drop_plan_for_slot
 from flask import (
     Blueprint, render_template, request, redirect,
     url_for, flash, jsonify
@@ -34,6 +34,7 @@ from flask_login import current_user
 
 from core.db import get_db, get_cursor
 from auth.helpers import admin_required, log_audit, get_client_ip
+from services.semester_service import period_for_section
 
 # ── Optional PDF support ─────────────────────────────────────────────────────
 try:
@@ -328,11 +329,11 @@ def add_slot():
         conn   = get_db()
         cursor = conn.cursor(dictionary=True, buffered=True)
 
-        cursor.execute("SELECT id FROM academic_periods WHERE is_active = 1 LIMIT 1")
-        period = cursor.fetchone()
-        if not period:
-            flash("No active academic period.", "danger")
-            return redirect(url_for("timetable.view_timetable"))
+        try:
+            period = period_for_section(cursor, int(section_id))
+        except ValueError as e:
+            flash(f"Cannot resolve academic period: {e}", "danger")
+            return redirect(url_for("timetable.view_timetable", section_id=section_id))
         period_id = period["id"]
 
         cursor.execute(
@@ -340,8 +341,11 @@ def add_slot():
             INSERT INTO timetable
                 (section_id, subject_id, faculty_id, day_of_week,
                  start_time, end_time, room, slot_type,
-                 academic_period_id, is_active, needs_review, created_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,1,0,NOW())
+                 academic_period_id, is_active, needs_review, created_at,
+                 effective_from)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,1,0,NOW(),
+                    GREATEST(CURDATE(),
+                             (SELECT start_date FROM academic_periods WHERE id = %s)))
             ON DUPLICATE KEY UPDATE
                 subject_id   = VALUES(subject_id),
                 faculty_id   = VALUES(faculty_id),
@@ -357,7 +361,7 @@ def add_slot():
                 int(subject_id) if subject_id else None,
                 int(faculty_id) if faculty_id else None,
                 day_of_week, start_time, end_time,
-                room, slot_type, period_id,
+                room, slot_type, period_id, period_id,
             )
         )
         if subject_id and faculty_id:
@@ -366,6 +370,7 @@ def add_slot():
                 int(subject_id), int(faculty_id), period_id
             )
 
+        replan_section(cursor, int(section_id), period_id)
         conn.commit()
         flash("Timetable slot saved.", "success")
 
@@ -392,12 +397,19 @@ def delete_slot(slot_id):
         cursor = conn.cursor(dictionary=True, buffered=True)
 
         cursor.execute(
+            "SELECT section_id, academic_period_id FROM timetable WHERE id = %s",
+            (slot_id,)
+        )
+        slot = cursor.fetchone()
+
+        cursor.execute(
             "SELECT COUNT(*) AS cnt FROM sessions WHERE timetable_id = %s",
             (slot_id,)
         )
         linked = cursor.fetchone()["cnt"]
 
         if linked == 0:
+            drop_plan_for_slot(cursor, slot_id)
             cursor.execute("DELETE FROM timetable WHERE id = %s", (slot_id,))
             flash("Slot permanently deleted.", "success")
         else:
@@ -411,6 +423,9 @@ def delete_slot(slot_id):
                 "warning"
             )
 
+        
+        if slot:
+            replan_section(cursor, slot["section_id"], slot["academic_period_id"])
         conn.commit()
 
     except Exception as exc:
@@ -1182,12 +1197,12 @@ def _process_rows(section_id: int, rows: list[dict], clear_existing: bool) -> di
             result["message"] = f"Section {section_id} not found."
             return result
 
-        # ── Active academic period ───────────────────────────────────────────
-        cursor.execute("SELECT id FROM academic_periods WHERE is_active = 1 LIMIT 1")
-        period = cursor.fetchone()
-        if not period:
+                # ── Period derived from the section's batch/semester ─────────────────
+        try:
+            period = period_for_section(cursor, section_id)
+        except ValueError as e:
             result["success"] = False
-            result["message"] = "No active academic period."
+            result["message"] = f"Cannot resolve academic period: {e}"
             return result
         period_id = period["id"]
 
@@ -1305,13 +1320,16 @@ def _process_rows(section_id: int, rows: list[dict], clear_existing: bool) -> di
                 if eg_row:
                     elective_group_id = eg_row["id"]
 
-            cursor.execute(
+                cursor.execute(
                     """
                     INSERT INTO timetable
                         (section_id, subject_id, elective_group_id, faculty_id, day_of_week,
                          start_time, end_time, room, slot_type,
-                         academic_period_id, is_active, needs_review, created_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,0,NOW())
+                         academic_period_id, is_active, needs_review, created_at,
+                         effective_from)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,1,0,NOW(),
+                            GREATEST(CURDATE(),
+                                     (SELECT start_date FROM academic_periods WHERE id = %s)))
                     ON DUPLICATE KEY UPDATE
                         subject_id        = VALUES(subject_id),
                         elective_group_id = VALUES(elective_group_id),
@@ -1324,7 +1342,7 @@ def _process_rows(section_id: int, rows: list[dict], clear_existing: bool) -> di
                         updated_at        = NOW()
                     """,
                     (section_id, subject_id, elective_group_id, faculty_id,
-                     day, start_str, end_str, room, slot_type, period_id)
+                     day, start_str, end_str, room, slot_type, period_id, period_id)
                 )
             
             if not is_break:
@@ -1354,9 +1372,11 @@ def _process_rows(section_id: int, rows: list[dict], clear_existing: bool) -> di
                         (section_id, subject_id, faculty_id, day_of_week,
                          start_time, end_time, room, slot_type,
                          academic_period_id, is_active,
-                         needs_review, created_at)
+                         needs_review, created_at, effective_from)
                     VALUES
-                        (%s,%s,%s,%s,%s,%s,%s,%s,%s,1,0,NOW())
+                        (%s,%s,%s,%s,%s,%s,%s,%s,%s,1,0,NOW(),
+                         GREATEST(CURDATE(),
+                                  (SELECT start_date FROM academic_periods WHERE id = %s)))
                     ON DUPLICATE KEY UPDATE
                         subject_id   = VALUES(subject_id),
                         faculty_id   = VALUES(faculty_id),
@@ -1370,7 +1390,7 @@ def _process_rows(section_id: int, rows: list[dict], clear_existing: bool) -> di
                     (
                         section_id, subject_id, faculty_id,
                         day, start_str, end_str,
-                        room, slot_type, period_id,
+                        room, slot_type, period_id, period_id,
                     )
                 )
 
@@ -1396,8 +1416,10 @@ def _process_rows(section_id: int, rows: list[dict], clear_existing: bool) -> di
                         f"Row {row_num}: section_subjects mapping failed — {exc}"
                     )
 
+        replan_section(cursor, section_id, period_id)
         conn.commit()
 
+        # ── Build credentials CSV (in-memory string, not a file) ─────────────
         # ── Build credentials CSV (in-memory string, not a file) ─────────────
         if credentials_log:
             result["credentials_csv"] = _build_credentials_csv(credentials_log)
@@ -1434,113 +1456,15 @@ def _build_credentials_csv(credentials_log: list[dict]) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HOLIDAYS  (unchanged)
+# HOLIDAYS  (moved to the Academic Calendar page)
+# The old holiday_calendar table is no longer read by the app.
+# Old links and bookmarks still work: they go to the new calendar page.
 # ─────────────────────────────────────────────────────────────────────────────
 
 @timetable_bp.route("/holidays")
 @admin_required
 def holidays():
-    cursor = get_cursor()
-    cursor.execute(
-        """
-        SELECT
-            h.*,
-            d.code AS dept_code,
-            sec.section_label,
-            u.full_name AS created_by_name
-        FROM holiday_calendar h
-        LEFT JOIN departments d   ON d.id   = h.department_id
-        LEFT JOIN sections sec    ON sec.id = h.section_id
-        LEFT JOIN users    u      ON u.id   = h.created_by
-        ORDER BY h.holiday_date DESC
-        """
-    )
-    holidays_list = cursor.fetchall()
-
-    cursor.execute("SELECT id, code, name FROM departments ORDER BY name")
-    departments = cursor.fetchall()
-
-    cursor.execute(
-        """
-        SELECT sec.id, sec.section_label, d.code AS dept_code
-        FROM sections sec
-        JOIN departments d       ON d.id  = sec.department_id
-        JOIN academic_periods ap ON ap.id = sec.academic_period_id
-        WHERE ap.is_active = 1
-        ORDER BY d.code, sec.section_label
-        """
-    )
-    sections = cursor.fetchall()
-
-    return render_template(
-        "admin/holidays.html",
-        holidays=holidays_list,
-        departments=departments,
-        sections=sections,
-    )
-
-
-@timetable_bp.route("/holidays/add", methods=["POST"])
-@admin_required
-def add_holiday():
-    holiday_date  = request.form.get("holiday_date",  "").strip()
-    reason        = request.form.get("reason",        "").strip() or None
-    scope         = request.form.get("scope",         "college")
-    department_id = request.form.get("department_id", "") or None
-    section_id    = request.form.get("section_id",    "") or None
-
-    if not holiday_date:
-        flash("Date is required.", "danger")
-        return redirect(url_for("timetable.holidays"))
-
-    conn = cursor = None
-    try:
-        conn   = get_db()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO holiday_calendar
-                (holiday_date, reason, scope,
-                 department_id, section_id,
-                 created_by, created_at)
-            VALUES (%s,%s,%s,%s,%s,%s,NOW())
-            """,
-            (
-                holiday_date, reason, scope,
-                int(department_id) if department_id else None,
-                int(section_id)    if section_id    else None,
-                current_user.id,
-            )
-        )
-        conn.commit()
-        flash("Holiday added.", "success")
-
-    except Exception as exc:
-        if conn:
-            conn.rollback()
-        flash(f"Error adding holiday: {exc}", "danger")
-
-    return redirect(url_for("timetable.holidays"))
-
-
-@timetable_bp.route("/holidays/<int:holiday_id>/delete", methods=["POST"])
-@admin_required
-def delete_holiday(holiday_id):
-    conn = cursor = None
-    try:
-        conn   = get_db()
-        cursor = conn.cursor()
-        cursor.execute(
-            "DELETE FROM holiday_calendar WHERE id = %s", (holiday_id,)
-        )
-        conn.commit()
-        flash("Holiday removed.", "success")
-    except Exception as exc:
-        if conn:
-            conn.rollback()
-        flash(f"Error: {exc}", "danger")
-
-    return redirect(url_for("timetable.holidays"))
+    return redirect(url_for("acad_calendar.index"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -8,7 +8,8 @@ Implements the full mobile sync pipeline (downloading faculty profile, sections,
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTabWidget, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QFrame, QStatusBar, QStackedWidget
+    QHeaderView, QMessageBox, QFrame, QStatusBar, QStackedWidget,
+    QSizePolicy
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -103,10 +104,17 @@ class MainWindow(QMainWindow):
 
         header_layout.addStretch()
 
-        # Engine Badge
         engine_device = getattr(self.engine, "device", "CPU")
-        self.engine_badge = QLabel(f"InsightFace Buffalo_l ({engine_device})", header_card)
+        # Engine Badge
+        self.engine_badge = QLabel(
+            f"InsightFace Buffalo_l ({engine_device})",
+            header_card
+        )
         self.engine_badge.setObjectName("badge")
+        self.engine_badge.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed
+        )
         header_layout.addWidget(self.engine_badge)
 
         # Full Sync Button
@@ -124,32 +132,82 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(header_card)
 
         # Main Tab Widget
-        self.tabs = QTabWidget(container)
+        # Main Dashboard Area
+        body_layout = QHBoxLayout()
+        body_layout.setSpacing(10)
 
-        # Tab 1: Attendance Workspace
-        self.attendance_view = AttendanceView(engine=self.engine, parent=self)
+        # ---------------- SIDEBAR ----------------
+        sidebar = QFrame(container)
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(200)
+
+        side_layout = QVBoxLayout(sidebar)
+        side_layout.setContentsMargins(8, 16, 8, 16)
+        side_layout.setSpacing(6)
+
+        self.nav_buttons = []
+
+        nav_items = [
+            ("Mark Attendance", 0),
+            ("Today's Classes", 1),
+            ("Offline Queue", 2),
+            ("AI Engine Status", 3),
+        ]
+
+        for label, page_idx in nav_items:
+            button = QPushButton(label, sidebar)
+            button.setCheckable(True)
+            button.setObjectName("secondary")
+            button.setMinimumHeight(40)
+
+            button.clicked.connect(
+                lambda checked=False, i=page_idx: self._switch_page(i)
+            )
+
+            side_layout.addWidget(button)
+            self.nav_buttons.append(button)
+
+        side_layout.addStretch()
+
+        # ---------------- PAGES ----------------
+        self.pages = QStackedWidget(container)
+
+        # Create all dashboard pages first
+        self.attendance_view = AttendanceView(
+            engine=self.engine,
+            parent=self,
+            user_profile=self.user_profile
+        )
         self.attendance_view.attendance_submitted.connect(self._on_attendance_submitted)
-        self.tabs.addTab(self.attendance_view, "Mark Attendance (Edge AI)")
 
-        # Tab 2: Today's Schedule & Sections
         self.schedule_widget = self._create_schedule_tab()
-        self.tabs.addTab(self.schedule_widget, "Today's Classes & Sections")
-
-        # Tab 3: Offline Queue & Sync
         self.queue_widget = self._create_queue_tab()
-        self.tabs.addTab(self.queue_widget, "Offline Sync Queue")
-
-        # Tab 4: Engine & System Info
         self.settings_widget = self._create_settings_tab()
-        self.tabs.addTab(self.settings_widget, "AI Engine Status")
 
-        root_layout.addWidget(self.tabs)
+        # Add pages to stacked widget
+        self.pages.addWidget(self.attendance_view)
+        self.pages.addWidget(self.schedule_widget)
+        self.pages.addWidget(self.queue_widget)
+        self.pages.addWidget(self.settings_widget)
+
+        body_layout.addWidget(sidebar)
+        body_layout.addWidget(self.pages, 1)
+
+        root_layout.addLayout(body_layout)
+
+        self._switch_page(0)
 
         # Status Bar
         self.status_bar = QStatusBar(self)
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready. Bundled models loaded locally.")
 
+    def _switch_page(self, index):
+        self.pages.setCurrentIndex(index)
+
+        for i, button in enumerate(self.nav_buttons):
+            button.setChecked(i == index)
+            
     def _create_schedule_tab(self):
         w = QWidget()
         layout = QVBoxLayout(w)
@@ -298,7 +356,7 @@ class MainWindow(QMainWindow):
             self.schedule_table.setCellWidget(row, 5, btn)
 
     def _on_start_class_attendance(self, session_data):
-        self.tabs.setCurrentIndex(0)
+        self._switch_page(0)
         combo = self.attendance_view.session_combo
         target_sid = session_data.get("session_id") or session_data.get("timetable_id") or session_data.get("section_id")
         for i in range(combo.count()):

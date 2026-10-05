@@ -7,6 +7,7 @@ import { PrimaryButton } from '../../components/PrimaryButton';
 import { useRecognitionEngine } from '../../hooks/useRecognitionEngine';
 import { faceDetector } from '../../core/detection/MLKitFaceDetector';
 import { similarityCalculator } from '../../core/similarity/SimilarityCalculator';
+import { livenessDetector } from '../../core/liveness/LivenessDetector';
 import { Esp32StreamView, checkEsp32Reachable } from '../../app/components/Esp32StreamView';
 import { PhoneCameraView } from '../../app/components/PhoneCameraView';
 import {
@@ -243,6 +244,17 @@ export const AttendanceScreen: React.FC = () => {
 
       for (const face of detection.faces) {
         try {
+          const livenessRes = livenessDetector.verifyLiveness(face, detection.imageWidth, detection.imageHeight);
+          if (!livenessRes.isReal) {
+            overlayItems.push({
+              box: face.boundingBox,
+              isUnknown: true,
+              statusType: 'warning',
+              customLabel: `SPOOF: ${livenessRes.failureReason || 'Fake Face'}`,
+            });
+            continue;
+          }
+
           const probe = await engine.generateEmbedding(normUri, face);
           const best = similarityCalculator.findBestMatch(
             probe.embedding,

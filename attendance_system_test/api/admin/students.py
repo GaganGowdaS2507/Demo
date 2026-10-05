@@ -98,7 +98,7 @@ def approval_queue():
 def approve_student(queue_id):
     """Approve a student registration."""
     section_id = request.form.get("section_id", "")
-    current_sem = request.form.get("current_sem", "")
+    # current_sem = request.form.get("current_sem", "")
 
     if not section_id:
         flash("Please select a section for the student.", "danger")
@@ -121,18 +121,19 @@ def approve_student(queue_id):
         user_id = queue_entry["user_id"]
 
         # Update user status
-        cursor.execute(
-            "UPDATE users SET status = 'active' WHERE id = %s",
-            (user_id,)
-        )
+                # Semester is derived from the section, never typed in
+        cursor.execute("SELECT sem_number FROM sections WHERE id = %s", (int(section_id),))
+        sec_row = cursor.fetchone()
+        if not sec_row:
+            flash("Selected section does not exist.", "danger")
+            return redirect(url_for("students_mgmt.approval_queue"))
 
-        # Update student record
-        update_fields = ["section_id = %s", "enrollment_status = 'approved_face_pending'"]
-        update_values = [int(section_id)]
-
-        if current_sem:
-            update_fields.append("current_sem = %s")
-            update_values.append(int(current_sem))
+        update_fields = [
+            "section_id = %s",
+            "current_sem = %s",
+            "enrollment_status = 'approved_face_pending'",
+        ]
+        update_values = [int(section_id), sec_row["sem_number"]]
 
         update_values.append(user_id)
         cursor.execute(
@@ -619,7 +620,7 @@ def edit_student(student_id):
     email = request.form.get("email", "").strip().lower()
     phone = request.form.get("phone", "").strip()
     usn = request.form.get("usn", "").strip().upper()
-    current_sem = request.form.get("current_sem", "").strip()
+    # current_sem = request.form.get("current_sem", "").strip()
     section_id = request.form.get("section_id", "").strip()
 
     if not full_name or not email or not usn:
@@ -658,8 +659,8 @@ def edit_student(student_id):
                 )
         else:
             cursor.execute(
-                "UPDATE students SET usn=%s, current_sem=%s WHERE id=%s",
-                (usn, int(current_sem) if current_sem else None, student_id)
+                "UPDATE students SET usn=%s WHERE id=%s",
+                (usn, student_id)
             )
         conn.commit()
 
@@ -721,7 +722,7 @@ def add_student_manual():
     password = request.form.get("password", "").strip()
     phone = request.form.get("phone", "").strip()
     section_id = request.form.get("section_id", "")
-    current_sem = request.form.get("current_sem", "")
+    # current_sem = request.form.get("current_sem", "")
 
     if not full_name or not email or not usn or not password:
         flash("Name, email, USN, and password are required.", "danger")
@@ -730,6 +731,15 @@ def add_student_manual():
     try:
         conn = get_db()
         cursor = conn.cursor()
+        
+        derived_sem = None
+        if section_id:
+            cursor.execute("SELECT sem_number FROM sections WHERE id = %s", (int(section_id),))
+            _row = cursor.fetchone()
+            if not _row:
+                flash("Selected section does not exist.", "danger")
+                return redirect(url_for("students_mgmt.list_students"))
+            derived_sem = _row[0]
 
         password_hash = hash_password(password)
 
@@ -755,7 +765,7 @@ def add_student_manual():
             """,
             (user_id, usn,
              int(section_id) if section_id else None,
-             int(current_sem) if current_sem else None)
+             derived_sem)
         )
 
         conn.commit()

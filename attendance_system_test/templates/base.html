@@ -343,12 +343,16 @@
       <i class="bi bi-eye nav-icon"></i>
       <span class="nav-label">Recognition Control</span>
     </a>
-    <a class="nav-link-item {{ 'active' if request.endpoint and 'holidays' in request.endpoint }}"
-       href="{{ url_for('timetable.holidays') }}" data-label="Holidays">
-      <i class="bi bi-umbrella nav-icon"></i>
-      <span class="nav-label">Holidays</span>
+    <a class="nav-link-item {{ 'active' if request.endpoint and 'acad_calendar' in request.endpoint }}"
+       href="{{ url_for('acad_calendar.index') }}" data-label="Academic Calendar">
+      <i class="bi bi-calendar-event nav-icon"></i>
+      <span class="nav-label">Academic Calendar</span>
     </a>
-
+    <a class="nav-link-item {{ 'active' if request.endpoint and 'sess_exc' in request.endpoint }}"
+       href="{{ url_for('sess_exc.index') }}" data-label="Class Changes">
+      <i class="bi bi-arrow-left-right nav-icon"></i>
+      <span class="nav-label">Class Changes</span>
+    </a>
     <div class="nav-section-label">Reports</div>
     <a class="nav-link-item {{ 'active' if request.endpoint and 'reports' in request.endpoint }}"
        href="{{ url_for('admin_reports.reports_home') }}" data-label="Reports">

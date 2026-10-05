@@ -12,6 +12,7 @@ from flask_login import current_user, login_required, logout_user
 
 from core.db import get_db, get_cursor
 from auth.helpers import faculty_required, admin_or_faculty_required, hash_password, logout_user,log_audit, get_client_ip,profile_completed_required, verify_password
+from services.attendance_engine import faculty_progress
 
 from utils.exam_results import (
     calculate_percentage,
@@ -141,7 +142,7 @@ def dashboard():
                cam.name AS camera_name,
                (SELECT COUNT(*) FROM attendance a
                 WHERE a.session_id = s.id AND a.status = 'present') AS present_count,
-               (SELECT COUNT(*) FROM students st WHERE st.section_id = s.section_id) AS total_count,
+                (SELECT COUNT(*) FROM attendance a2 WHERE a2.session_id = s.id) AS total_count,
                 (CASE WHEN s.elective_group_id IS NOT NULL THEN 1 ELSE 0 END) AS is_elective,
                 eg.group_type
         FROM sessions s
@@ -263,6 +264,29 @@ def dashboard():
         timetable_stats["unique_subjects"] = len(subjects_set)
         timetable_stats["unique_sections"] = len(sections_set)
 
+        # ---- Subject progress cards: planned -> conducted -> remaining ----
+    # One source for all class counts: services/attendance_engine.py
+    subject_progress = []
+    if faculty_id:
+        cursor.execute(
+            """
+            SELECT DISTINCT ps.academic_period_id AS id
+            FROM planned_sessions ps
+            JOIN academic_periods ap ON ap.id = ps.academic_period_id
+            WHERE ps.faculty_id = %s AND ap.is_archived = 0
+              AND CURDATE() BETWEEN ap.start_date AND ap.end_date
+            """,
+            (faculty_id,)
+        )
+        for p in cursor.fetchall():
+            subject_progress.extend(faculty_progress(cursor, faculty_id, p["id"]))
+    progress_totals = {
+        "planned": sum(r["planned"] for r in subject_progress),
+        "done": sum(r["conducted_planned"] for r in subject_progress),
+        "remaining": sum(r["remaining"] for r in subject_progress),
+        "missed": sum(r["missed"] for r in subject_progress),
+    }
+
     return render_template(
         "faculty/dashboard.html",
         todays_sessions=todays_sessions,
@@ -276,6 +300,8 @@ def dashboard():
         recent_results=recent_results,
         weekly_timetable=weekly_timetable,
         timetable_stats=timetable_stats,
+        subject_progress=subject_progress,
+        progress_totals=progress_totals,
     )
 
 @faculty_bp.route("/subjects")
@@ -381,7 +407,7 @@ def session_history():
                sec.id AS section_id, sec.section_label, d.code AS dept_code,
                (SELECT COUNT(*) FROM attendance a
                 WHERE a.session_id = s.id AND a.status = 'present') AS present_count,
-               (SELECT COUNT(*) FROM students st WHERE st.section_id = s.section_id) AS total_count
+                              (SELECT COUNT(*) FROM attendance a2 WHERE a2.session_id = s.id) AS total_count
         FROM sessions s
         JOIN sections sec ON sec.id = s.section_id
         JOIN departments d ON d.id = sec.department_id
@@ -900,8 +926,8 @@ def my_sessions_api():
                s.start_time, s.end_time,
                (SELECT COUNT(*) FROM attendance a
                 WHERE a.session_id = s.id AND a.status = 'present') AS present_count,
-               (SELECT COUNT(*) FROM students st WHERE st.section_id = s.section_id) AS total_count,
-                (CASE WHEN s.elective_group_id IS NOT NULL THEN 1 ELSE 0 END) AS is_elective,
+                              (SELECT COUNT(*) FROM attendance a2 WHERE a2.session_id = s.id) AS total_count,
+                IF(s.elective_group_id IS NOT NULL, 1, 0) AS is_elective,
                 eg.group_type
         FROM sessions s
         JOIN sections sec ON sec.id = s.section_id

@@ -43,6 +43,41 @@
     </div>
 </div>
 
+<!-- Department teaching progress -->
+{% if dept_progress %}
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-bar-chart-steps"></i> Teaching progress by section</h6>
+        <span class="badge bg-{{ 'danger' if dept_defaulters else 'success' }}">
+            {{ dept_defaulters }} defaulter{{ '' if dept_defaulters == 1 else 's' }} (below 75%)
+        </span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead class="table-light">
+                <tr><th>Section</th><th>Planned</th><th>Done</th><th>Left</th><th>Missed</th><th style="min-width:140px">Progress</th></tr>
+            </thead>
+            <tbody>
+                {% for p in dept_progress %}
+                <tr>
+                    <td>{{ p.label }}</td>
+                    <td>{{ p.planned }}</td>
+                    <td class="text-success fw-bold">{{ p.done }}</td>
+                    <td class="text-primary">{{ p.remaining }}</td>
+                    <td class="{{ 'text-danger fw-bold' if p.missed else 'text-muted' }}">{{ p.missed }}</td>
+                    <td>
+                        <div class="progress" style="height:8px;">
+                            <div class="progress-bar bg-success" style="width: {{ p.completion_pct }}%"></div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 <!-- Quick Actions (FIXED ROW) -->
 <div class="row g-3 mb-4">
 

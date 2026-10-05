@@ -9,7 +9,7 @@
         <span class="ms-3 text-muted">Sessions: <strong>{{ sessions|length }}</strong></span>
     </div>
     <div class="d-flex gap-2">
-        <a href="{{ url_for('faculty_reports.download_subject_excel', subject_id=subject_id, section_id=section_id, **{'from': date_from, 'to': date_to}) }}"
+        <a href="{{ url_for('faculty_reports.download_subject_excel', subject_id=subject_id, section_id=section_id, group=group_id, **{'from': date_from, 'to': date_to}) }}"
            class="btn btn-sm btn-success">
             <i class="bi bi-file-earmark-excel"></i> Download Excel
         </a>
@@ -66,12 +66,14 @@
                         <td><code>{{ r.usn }}</code></td>
                         <td>{{ r.name }}</td>
                         {% for sess in sessions %}
-                        {% set status = r.session_data.get(sess.id, 'absent') %}
+                        {% set status = r.session_data.get(sess.id) %}
                         <td class="text-center">
                             {% if status == 'present' %}
                             <span class="text-success fw-bold">P</span>
-                            {% else %}
+                            {% elif status == 'absent' %}
                             <span class="text-danger">A</span>
+                            {% else %}
+                            <span class="text-muted">-</span>
                             {% endif %}
                         </td>
                         {% endfor %}

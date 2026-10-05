@@ -35,69 +35,16 @@ def _td_to_str(value) -> str:
 
 
 def _auto_create_todays_sessions(cursor, conn, today: str, day_name: str) -> int:
-    """
-    Auto-create missing sessions from timetable for today.
-    Skips Interval / Lunch slots and slots with no subject.
-    Returns the number of sessions created.
-    """
-    cursor.execute(
-        "SELECT id FROM academic_periods WHERE is_active = 1 LIMIT 1"
-    )
-    period = cursor.fetchone()
-    if not period:
-        return 0
-
-    period_id     = period["id"]
-    created_count = 0
-
-    # All timetable slots for today — real subjects only
-    cursor.execute("""
-        SELECT t.*
-        FROM timetable t
-        WHERE t.day_of_week        = %s
-          AND t.academic_period_id = %s
-          AND t.is_active          = 1
-          AND t.subject_id         IS NOT NULL
-          AND (t.slot_type IS NULL
-               OR t.slot_type NOT IN ('Interval', 'Lunch'))
-    """, (day_name, period_id))
-    slots = cursor.fetchall()
-
-    for slot in slots:
-        # Skip truly empty rows (defensive)
-        if not slot.get("subject_id"):
-            continue
-
-        # Check if session already exists for this exact slot
-        cursor.execute("""
-            SELECT id FROM sessions
-            WHERE section_id   = %s
-              AND subject_id   = %s
-              AND session_date = %s
-              AND start_time   = %s
-        """, (slot["section_id"], slot["subject_id"], today, slot["start_time"]))
-
-        if cursor.fetchone():
-            continue
-
-        # Insert the missing session
-        cursor.execute("""
-            INSERT INTO sessions
-                (section_id, subject_id, faculty_id, session_date,
-                 start_time, end_time, status)
-            VALUES (%s, %s, %s, %s, %s, %s, 'scheduled')
-        """, (
-            slot["section_id"],
-            slot["subject_id"],
-            slot["faculty_id"],
-            today,
-            slot["start_time"],
-            slot["end_time"],
-        ))
-        created_count += 1
-
-    conn.commit()
-    return created_count
+    """Open today's missing sessions from the plan (shared code: respects the
+    calendar, cancellations, moves, substitutes and elective groups)."""
+    from services.timetable_engine import open_sessions_for_date
+    cur = conn.cursor(dictionary=True, buffered=True)
+    try:
+        res = open_sessions_for_date(cur, today)
+        conn.commit()
+        return res["created"]
+    finally:
+        cur.close()
 
 
 def _fetch_todays_sessions(cursor, today: str) -> list:
@@ -129,8 +76,8 @@ def _fetch_todays_sessions(cursor, today: str) -> list:
              WHERE a.session_id = s.id
                AND a.status     = 'present') AS present_count,
             (SELECT COUNT(*)
-             FROM students st
-             WHERE st.section_id = s.section_id) AS total_count
+             FROM attendance a2
+             WHERE a2.session_id = s.id) AS total_count
         FROM sessions s
         JOIN sections sec    ON sec.id  = s.section_id
         JOIN departments d   ON d.id    = sec.department_id
@@ -328,22 +275,11 @@ def dashboard():
     row          = cursor.fetchone()
     college_name = row["setting_value"] if row else "Attendance System"
 
-    # Defaulters (< 75 % attendance in active period)
-    cursor.execute("""
-        SELECT COUNT(*) AS cnt FROM (
-            SELECT a.student_id
-            FROM attendance a
-            JOIN sessions s ON s.id = a.session_id
-            JOIN academic_periods ap ON ap.is_active = 1
-            WHERE s.session_date BETWEEN ap.start_date AND ap.end_date
-            GROUP BY a.student_id
-            HAVING (
-                SUM(CASE WHEN a.status = 'present' THEN 1 ELSE 0 END)
-                / COUNT(*) * 100
-            ) < 75
-        ) AS defaulters
-    """)
-    defaulter_count = cursor.fetchone()["cnt"]
+    # Defaulters (< 75 % overall, held classes only, semesters running today).
+    # One source: services/attendance_engine.py
+    from services.attendance_engine import overall_defaulters
+    defaulter_count = len(overall_defaulters(cursor, 75))
+
 
     # Cameras available for assignment
     cursor.execute("""

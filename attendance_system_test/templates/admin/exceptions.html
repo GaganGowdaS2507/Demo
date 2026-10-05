@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %}Class Changes{% endblock %}
+{% block page_title %}Class Changes (cancel, move, substitute, extra){% endblock %}
+
+{% macro hidden() %}
+<input type="hidden" name="period_id" value="{{ selected.id }}">
+<input type="hidden" name="date_from" value="{{ f.date_from }}">
+<input type="hidden" name="date_to" value="{{ f.date_to }}">
+<input type="hidden" name="section_id" value="{{ f.section_id or '' }}">
+<input type="hidden" name="faculty_id" value="{{ f.faculty_id or '' }}">
+{% endmacro %}
+
+{% block content %}
+{% if not selected %}
+<div class="alert alert-warning">Create an Academic Period first.</div>
+{% else %}
+
+<form method="GET" class="row g-2 align-items-end mb-3">
+    <div class="col-md-3">
+        <label class="form-label small mb-0">Semester</label>
+        <select name="period_id" class="form-select form-select-sm">
+            {% for p in periods %}
+            <option value="{{ p.id }}" {{ 'selected' if p.id == selected.id }}>{{ p.name }} ({{ p.academic_year or '-' }}){{ ' - Active' if p.is_active }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-0">From</label>
+        <input type="date" name="date_from" value="{{ f.date_from }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-0">To</label>
+        <input type="date" name="date_to" value="{{ f.date_to }}" class="form-control form-control-sm">
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-0">Section</label>
+        <select name="section_id" class="form-select form-select-sm">
+            <option value="">All</option>
+            {% for s in sections %}<option value="{{ s.id }}" {{ 'selected' if f.section_id == s.id }}>{{ s.dept_code }}-{{ s.section_label }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label small mb-0">Faculty</label>
+        <select name="faculty_id" class="form-select form-select-sm">
+            <option value="">All</option>
+            {% for x in faculty %}<option value="{{ x.id }}" {{ 'selected' if f.faculty_id == x.id }}>{{ x.full_name or x.faculty_code }}</option>{% endfor %}
+        </select>
+    </div>
+    <div class="col-md-1"><button class="btn btn-sm btn-primary w-100">Show</button></div>
+</form>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-list-check"></i> Planned classes ({{ rows|length }})</h6></div>
+    <div class="card-body p-0">
+        {% if rows %}
+        <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle small">
+            <thead class="table-light">
+                <tr><th>Date</th><th>Time</th><th>Section</th><th>Subject</th><th>Faculty</th><th>Room</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+            {% for r in rows %}
+                <tr>
+                    <td class="text-nowrap fw-semibold">{{ r.planned_date.strftime('%a %d %b') }}</td>
+                    <td class="text-nowrap">{{ r.time_text }}</td>
+                    <td>{{ r.dept_code }}-{{ r.section_label }}</td>
+                    <td>{{ r.subject_code }} <span class="text-muted">{{ r.component }}</span></td>
+                    <td>
+                        {{ r.faculty_name or '-' }}
+                        {% if r.sub_name %}<div class="text-primary">Sub: {{ r.sub_name }}</div>{% endif %}
+                    </td>
+                    <td>{{ r.room or '-' }}</td>
+                    <td>
+                        {% if r.status == 'planned' %}<span class="badge bg-success">Planned</span>
+                        {% elif r.status == 'moved' %}<span class="badge bg-warning text-dark">Moved away</span>
+                        {% elif r.block_event_id %}<span class="badge bg-secondary">Cancelled (calendar)</span>
+                        {% else %}<span class="badge bg-secondary">Cancelled</span>{% endif %}
+                        {% if r.origin == 'moved' %}<span class="badge bg-info text-dark">Moved here</span>{% endif %}
+                        {% if r.origin == 'extra' %}<span class="badge bg-info text-dark">Extra</span>{% endif %}
+                        {% if r.session_status %}<div class="text-muted">class: {{ r.session_status }}</div>{% endif %}
+                    </td>
+                    <td>
+                        {% if r.status == 'planned' and r.session_status not in ['active', 'completed', 'dismissed'] %}
+                        <button type="button" class="btn btn-sm btn-outline-primary py-0"
+                                onclick="document.getElementById('act-{{ r.id }}').classList.toggle('d-none')">Change</button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% if r.status == 'planned' and r.session_status not in ['active', 'completed', 'dismissed'] %}
+                <tr id="act-{{ r.id }}" class="d-none table-light">
+                    <td colspan="8">
+                        <form method="POST" action="{{ url_for('sess_exc.apply_exception') }}" class="row g-2 align-items-end exc-form">
+                            {{ hidden() }}
+                            <input type="hidden" name="planned_session_id" value="{{ r.id }}">
+                            <div class="col-md-2">
+                                <label class="form-label small mb-0">Action</label>
+                                <select name="action" class="form-select form-select-sm act-select">
+                                    <option value="cancel">Cancel class</option>
+                                    <option value="substitute">Substitute faculty</option>
+                                    <option value="room_change">Change room</option>
+                                    <option value="move">Move to another date</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3 g-substitute d-none">
+                                <label class="form-label small mb-0">Substitute</label>
+                                <select name="new_faculty_id" class="form-select form-select-sm">
+                                    <option value="">Select</option>
+                                    {% for x in faculty %}<option value="{{ x.id }}">{{ x.full_name or x.faculty_code }}</option>{% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-2 g-room d-none">
+                                <label class="form-label small mb-0">New room</label>
+                                <input type="text" name="new_room" maxlength="50" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-2 g-move d-none">
+                                <label class="form-label small mb-0">New date</label>
+                                <input type="date" name="new_date" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-1 g-move d-none">
+                                <label class="form-label small mb-0">Start</label>
+                                <input type="time" name="new_start" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-1 g-move d-none">
+                                <label class="form-label small mb-0">End</label>
+                                <input type="time" name="new_end" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small mb-0">Reason</label>
+                                <input type="text" name="reason" maxlength="255" class="form-control form-control-sm">
+                            </div>
+                            <div class="col-md-1"><button class="btn btn-sm btn-primary w-100">Save</button></div>
+                        </form>
+                    </td>
+                </tr>
+                {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <div class="text-center py-4 text-muted">
+            No planned classes in this range. If the semester has none at all, run
+            <code>python -m services.timetable_engine</code>.
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-5 mb-3">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-plus-circle"></i> Add extra class</h6></div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('sess_exc.add_extra') }}">
+                    {{ hidden() }}
+                    <div class="mb-2">
+                        <label class="form-label small mb-0">Section and subject *</label>
+                        <select name="combo" class="form-select form-select-sm" required>
+                            <option value="">Select</option>
+                            {% for c in combos %}<option value="{{ c.section_id }}:{{ c.subject_id }}">{{ c.dept_code }}-{{ c.section_label }} | {{ c.code }} {{ c.name }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small mb-0">Faculty (empty = the subject's faculty)</label>
+                        <select name="faculty_id" class="form-select form-select-sm">
+                            <option value="">Same as subject</option>
+                            {% for x in faculty %}<option value="{{ x.id }}">{{ x.full_name or x.faculty_code }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6"><label class="form-label small mb-0">Date *</label>
+                            <input type="date" name="class_date" class="form-control form-control-sm" required></div>
+                        <div class="col-3"><label class="form-label small mb-0">Start *</label>
+                            <input type="time" name="start_time" class="form-control form-control-sm" required></div>
+                        <div class="col-3"><label class="form-label small mb-0">End *</label>
+                            <input type="time" name="end_time" class="form-control form-control-sm" required></div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6"><label class="form-label small mb-0">Room</label>
+                            <input type="text" name="room" maxlength="50" class="form-control form-control-sm"></div>
+                        <div class="col-6"><label class="form-label small mb-0">Type</label>
+                            <select name="component" class="form-select form-select-sm">
+                                <option value="theory">Theory</option><option value="lab">Lab</option></select></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small mb-0">Reason</label>
+                        <input type="text" name="reason" maxlength="255" class="form-control form-control-sm">
+                    </div>
+                    <button class="btn btn-primary btn-sm w-100">Add extra class</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-clock-history"></i> Recent changes</h6></div>
+            <div class="card-body p-0">
+                {% if recent %}
+                <div class="table-responsive">
+                <table class="table table-sm mb-0 align-middle small">
+                    <thead class="table-light"><tr><th>Change</th><th>Class</th><th>Reason</th><th>By</th><th></th></tr></thead>
+                    <tbody>
+                    {% for e in recent %}
+                        <tr>
+                            <td>
+                                <span class="badge bg-dark">{{ e.exception_type }}</span>
+                                {% if e.exception_type == 'move' and e.new_date %}<div>to {{ e.new_date.strftime('%d %b') }}</div>{% endif %}
+                                {% if e.exception_type == 'substitute' %}<div>{{ e.new_faculty_name }}</div>{% endif %}
+                                {% if e.exception_type == 'room_change' %}<div>{{ e.new_room }}</div>{% endif %}
+                            </td>
+                            <td>{{ e.planned_date.strftime('%d %b') }} {{ e.time_text }}<div class="text-muted">{{ e.dept_code }}-{{ e.section_label }} {{ e.subject_code }}</div></td>
+                            <td>{{ e.reason or '-' }}</td>
+                            <td>{{ e.by_name or '-' }}</td>
+                            <td>
+                                <form method="POST" action="{{ url_for('sess_exc.undo', exc_id=e.id) }}"
+                                      onsubmit="return confirm('Undo this change?')">
+                                    {{ hidden() }}
+                                    <button class="btn btn-sm btn-outline-secondary py-0">Undo</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4 text-muted">No changes yet.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+function refreshAct(sel) {
+    var form = sel.closest('form'), a = sel.value;
+    form.querySelectorAll('.g-substitute').forEach(function (e) { e.classList.toggle('d-none', a !== 'substitute'); });
+    form.querySelectorAll('.g-room').forEach(function (e) { e.classList.toggle('d-none', a !== 'room_change'); });
+    form.querySelectorAll('.g-move').forEach(function (e) { e.classList.toggle('d-none', a !== 'move'); });
+}
+document.querySelectorAll('.act-select').forEach(function (sel) {
+    sel.addEventListener('change', function () { refreshAct(sel); });
+    refreshAct(sel);
+});
+</script>
+{% endblock %}

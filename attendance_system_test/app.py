@@ -9,13 +9,14 @@ import os
 import sys
 import logging
 from datetime import datetime, timedelta
-
-from flask import Flask, redirect, url_for, g, session, make_response
+from core import db as core_db
+from flask import Flask, app, redirect, url_for, g, session, make_response
 from flask_login import LoginManager, current_user, UserMixin
 
 from config import Config
 from core.db import init_db_pool, close_db, get_db, get_cursor
-from core import db as core_db
+from core.db import get_db
+from mysql.connector import IntegrityError
 
 # ============================================
 # Logging Setup
@@ -271,101 +272,398 @@ def init_recognition():
 
 
 
+# # def _generate_todays_sessions(app):
+# #     """Create sessions for today from the timetable. Safe to call multiple times (idempotent)."""
+# #     conn = None
+# #     cursor = None
+# #     try:
+# #         from core.db import get_db
+# #         conn = get_db()
+# #         cursor = conn.cursor(dictionary=True, buffered=True)
+
+# #         today = datetime.now().strftime("%Y-%m-%d")
+# #         day_name = datetime.now().strftime("%A")
+
+# #         # Check holiday
+# #         cursor.execute(
+# #             """
+# #             SELECT id FROM holiday_calendar
+# #             WHERE holiday_date = %s
+# #             AND (scope = 'college' OR department_id IS NULL)
+# #             """,
+# #             (today,)
+# #         )
+# #         if cursor.fetchone():
+# #             logger.info("Today (%s) is a holiday. Skipping session generation.", today)
+# #             return 0
+
+# #         # Get timetable slots — include start_time, end_time, source
+# #         cursor.execute(
+# #             """
+# #             SELECT t.id AS timetable_id, t.section_id,
+# #                    t.subject_id, t.faculty_id,
+# #                    t.start_time, t.end_time
+# #             FROM timetable t
+# #             JOIN academic_periods ap ON ap.id = t.academic_period_id
+# #             WHERE t.day_of_week = %s
+# #               AND ap.is_active = 1
+# #               AND t.slot_type NOT IN ('Interval', 'Lunch')
+# #               AND t.subject_id IS NOT NULL
+# #             """,
+# #             (day_name,)
+# #         )
+# #         slots = cursor.fetchall()
+
+# #         created = 0
+# #         for slot in slots:
+# #             # Primary dedup: by timetable_id + date
+# #             cursor.execute(
+# #                 "SELECT id FROM sessions WHERE timetable_id = %s AND session_date = %s",
+# #                 (slot["timetable_id"], today)
+# #             )
+# #             if cursor.fetchone():
+# #                 continue  # Already exists
+# #             # Secondary dedup: by section+subject+faculty+date+start_time (handles legacy rows)
+# #             cursor.execute(
+# #                 """SELECT id FROM sessions
+# #                    WHERE section_id=%s AND subject_id=%s AND faculty_id=%s
+# #                      AND session_date=%s AND start_time=%s""",
+# #                 (slot["section_id"], slot["subject_id"], slot["faculty_id"],
+# #                  today, slot["start_time"])
+# #             )
+# #             if cursor.fetchone():
+# #                 continue
+
+# #             try:
+# #                 cursor.execute(
+# #                     """
+# #                     INSERT INTO sessions
+# #                         (timetable_id, section_id, subject_id, faculty_id,
+# #                          session_date, start_time, end_time,
+# #                          status, source, created_at)
+# #                     VALUES (%s, %s, %s, %s, %s, %s, %s, 'scheduled', 'timetable', NOW())
+# #                     """,
+# #                     (slot["timetable_id"], slot["section_id"],
+# #                      slot["subject_id"], slot["faculty_id"],
+# #                      today, slot["start_time"], slot["end_time"])
+# #                 )
+# #             except IntegrityError:
+# #                 # Another worker already created this slot for today
+# #                 # (unique key uq_sessions_timetable_date). Skip it.
+# #                 continue
+# #             session_id = cursor.lastrowid
+
+# #             cursor.execute(
+# #                 "SELECT id, usn FROM students WHERE section_id = %s",
+# #                 (slot["section_id"],)
+# #             )
+# #             students = cursor.fetchall()
+# #             for stu in students:
+# #                 cursor.execute(
+# #                     """
+# #                     INSERT IGNORE INTO attendance
+# #                         (session_id, student_id, usn, status, method, marked_at)
+# #                     VALUES (%s, %s, %s, 'absent', 'system', NOW())
+# #                     """,
+# #                     (session_id, stu["id"], stu["usn"])
+# #                 )
+# #             created += 1
+
+# #         conn.commit()
+# #         logger.info("Session generation: Created %s sessions for %s", created, today)
+# #         return created
+
+# #     except Exception as e:
+# #         logger.error(f"Session generation error: {e}")
+# #         if conn:
+# #             try:
+# #                 conn.rollback()
+# #             except Exception:
+# #                 pass
+# #         return 0
+# #     finally:
+# #         try:
+# #             if cursor:
+# #                 cursor.close()
+# #             if conn:
+# #                 conn.close()
+# #         except Exception:
+# #             pass
+
+
+# def _generate_todays_sessions(app):
+#     """Create sessions for today from the timetable, using the academic calendar.
+#     Safe to call multiple times (idempotent)."""
+#     conn = None
+#     cursor = None
+#     try:
+#         from core.db import get_db
+#         from mysql.connector import IntegrityError
+#         from services.calendar_service import check_slot
+
+#         conn = get_db()
+#         cursor = conn.cursor(dictionary=True, buffered=True)
+
+#         today = datetime.now().strftime("%Y-%m-%d")
+
+#         # All timetable slots of the active period(s), every weekday.
+#         # The calendar decides which weekday's slots run today for each section.
+#         cursor.execute(
+#             """
+#             SELECT t.id AS timetable_id, t.section_id,
+#                    t.subject_id, t.faculty_id, t.day_of_week,
+#                    t.start_time, t.end_time
+#             FROM timetable t
+#             JOIN academic_periods ap ON ap.id = t.academic_period_id
+#             WHERE ap.is_active = 1
+#               AND t.slot_type NOT IN ('Interval', 'Lunch')
+#               AND t.subject_id IS NOT NULL
+#             """
+#         )
+#         slots = cursor.fetchall()
+
+#         created = 0
+#         blocked = 0
+#         day_cache = {}
+#         for slot in slots:
+#             chk = check_slot(cursor, slot["section_id"], today,
+#                              slot["start_time"], slot["end_time"], cache=day_cache)
+
+#             # Today this section follows a different weekday's timetable.
+#             if chk["weekday"] != slot["day_of_week"]:
+#                 continue
+#             # Holiday / event / outside semester / Sunday.
+#             if not chk["ok"]:
+#                 blocked += 1
+#                 continue
+
+#             # Primary dedup: by timetable_id + date
+#             cursor.execute(
+#                 "SELECT id FROM sessions WHERE timetable_id = %s AND session_date = %s",
+#                 (slot["timetable_id"], today)
+#             )
+#             if cursor.fetchone():
+#                 continue  # Already exists
+#             # Secondary dedup: by section+subject+faculty+date+start_time (handles legacy rows)
+#             cursor.execute(
+#                 """SELECT id FROM sessions
+#                    WHERE section_id=%s AND subject_id=%s AND faculty_id=%s
+#                      AND session_date=%s AND start_time=%s""",
+#                 (slot["section_id"], slot["subject_id"], slot["faculty_id"],
+#                  today, slot["start_time"])
+#             )
+#             if cursor.fetchone():
+#                 continue
+
+#             try:
+#                 cursor.execute(
+#                     """
+#                     INSERT INTO sessions
+#                         (timetable_id, section_id, subject_id, faculty_id,
+#                          session_date, start_time, end_time,
+#                          status, source, created_at)
+#                     VALUES (%s, %s, %s, %s, %s, %s, %s, 'scheduled', 'timetable', NOW())
+#                     """,
+#                     (slot["timetable_id"], slot["section_id"],
+#                      slot["subject_id"], slot["faculty_id"],
+#                      today, slot["start_time"], slot["end_time"])
+#                 )
+#             except IntegrityError:
+#                 # Another worker already created this slot for today
+#                 # (unique key uq_sessions_timetable_date). Skip it.
+#                 continue
+#             session_id = cursor.lastrowid
+
+#             cursor.execute(
+#                 "SELECT id, usn FROM students WHERE section_id = %s",
+#                 (slot["section_id"],)
+#             )
+#             students = cursor.fetchall()
+#             for stu in students:
+#                 cursor.execute(
+#                     """
+#                     INSERT IGNORE INTO attendance
+#                         (session_id, student_id, usn, status, method, marked_at)
+#                     VALUES (%s, %s, %s, 'absent', 'system', NOW())
+#                     """,
+#                     (session_id, stu["id"], stu["usn"])
+#                 )
+#             created += 1
+
+#         conn.commit()
+#         logger.info("Session generation for %s: created %s, blocked by calendar %s",
+#                     today, created, blocked)
+#         return created
+
+#     except Exception as e:
+#         logger.error(f"Session generation error: {e}")
+#         if conn:
+#             try:
+#                 conn.rollback()
+#             except Exception:
+#                 pass
+#         return 0
+#     finally:
+#         try:
+#             if cursor:
+#                 cursor.close()
+#             if conn:
+#                 conn.close()
+#         except Exception:
+#             pass
+
+
+# def _generate_todays_sessions(app):
+#     """Create sessions for today from the timetable, using the academic calendar.
+#     Safe to call multiple times (idempotent)."""
+#     conn = None
+#     cursor = None
+#     try:
+#         from core.db import get_db
+#         from mysql.connector import IntegrityError
+#         from services.calendar_service import check_slot
+
+#         conn = get_db()
+#         cursor = conn.cursor(dictionary=True, buffered=True)
+
+#         today = datetime.now().strftime("%Y-%m-%d")
+
+#         # All timetable slots of the active period(s), every weekday.
+#         # The calendar decides which weekday's slots run today for each section.
+#         cursor.execute(
+#             """
+#             SELECT t.id AS timetable_id, t.section_id,
+#                    t.subject_id, t.faculty_id, t.day_of_week,
+#                    t.start_time, t.end_time
+#             FROM timetable t
+#             JOIN academic_periods ap ON ap.id = t.academic_period_id
+#             WHERE ap.is_active = 1
+#               AND t.is_active = 1
+#               AND (t.effective_from IS NULL OR t.effective_from <= CURDATE())
+#               AND (t.effective_to   IS NULL OR t.effective_to   >= CURDATE())
+#               AND t.slot_type NOT IN ('Interval', 'Lunch')
+#               AND t.subject_id IS NOT NULL
+#             """
+#         )
+#         slots = cursor.fetchall()
+
+#         created = 0
+#         blocked = 0
+#         day_cache = {}
+#         for slot in slots:
+#             chk = check_slot(cursor, slot["section_id"], today,
+#                              slot["start_time"], slot["end_time"], cache=day_cache)
+
+#             # Today this section follows a different weekday's timetable.
+#             if chk["weekday"] != slot["day_of_week"]:
+#                 continue
+#             # Holiday / event / outside semester / Sunday.
+#             if not chk["ok"]:
+#                 blocked += 1
+#                 continue
+
+#            # The plan may say this class was cancelled or moved (Class Changes page).
+#             cursor.execute(
+#                 "SELECT id, status, substitute_faculty_id, room FROM planned_sessions "
+#                 "WHERE timetable_id = %s AND planned_date = %s AND origin = 'timetable'",
+#                 (slot["timetable_id"], today)
+#             )
+#             plan = cursor.fetchone()
+#             if plan and plan["status"] != "planned":
+#                 continue  # Already exists
+#             # Secondary dedup: by section+subject+faculty+date+start_time (handles legacy rows)
+#             cursor.execute(
+#                 """SELECT id FROM sessions
+#                    WHERE section_id=%s AND subject_id=%s AND faculty_id=%s
+#                      AND session_date=%s AND start_time=%s""",
+#                 (slot["section_id"], slot["subject_id"], slot["faculty_id"],
+#                  today, slot["start_time"])
+#             )
+#             if cursor.fetchone():
+#                 continue
+
+#             try:
+#                 cursor.execute(
+#                     """
+#                     INSERT INTO sessions
+#                         (timetable_id, section_id, subject_id, faculty_id,
+#                          session_date, start_time, end_time,
+#                          status, source, created_at,
+#                          planned_session_id, substitute_faculty_id, room)
+#                     VALUES (%s, %s, %s, %s, %s, %s, %s, 'scheduled', 'timetable', NOW(),
+#                             %s, %s, %s)
+#                     """,
+#                     (slot["timetable_id"], slot["section_id"],
+#                      slot["subject_id"], slot["faculty_id"],
+#                      today, slot["start_time"], slot["end_time"],
+#                      plan["id"] if plan else None,
+#                      plan["substitute_faculty_id"] if plan else None,
+#                      plan["room"] if plan else None)
+#                 )
+#             except IntegrityError:
+#                 # Another worker already created this slot for today
+#                 # (unique key uq_sessions_timetable_date). Skip it.
+#                 continue
+#             session_id = cursor.lastrowid
+
+#             cursor.execute(
+#                 "SELECT id, usn FROM students WHERE section_id = %s",
+#                 (slot["section_id"],)
+#             )
+#             students = cursor.fetchall()
+#             for stu in students:
+#                 cursor.execute(
+#                     """
+#                     INSERT IGNORE INTO attendance
+#                         (session_id, student_id, usn, status, method, marked_at)
+#                     VALUES (%s, %s, %s, 'absent', 'system', NOW())
+#                     """,
+#                     (session_id, stu["id"], stu["usn"])
+#                 )
+#             created += 1
+
+#         conn.commit()
+#         logger.info("Session generation for %s: created %s, blocked by calendar %s",
+#                     today, created, blocked)
+#         return created
+
+#     except Exception as e:
+#         logger.error(f"Session generation error: {e}")
+#         if conn:
+#             try:
+#                 conn.rollback()
+#             except Exception:
+#                 pass
+#         return 0
+#     finally:
+#         try:
+#             if cursor:
+#                 cursor.close()
+#             if conn:
+#                 conn.close()
+#         except Exception:
+#             pass
+
+
 def _generate_todays_sessions(app):
-    """Create sessions for today from the timetable. Safe to call multiple times (idempotent)."""
+    """Open today's real sessions from the PLAN. Calendar, cancellations, moves,
+    substitutes and elective groups are handled in services/timetable_engine.py.
+    Safe to call many times."""
     conn = None
     cursor = None
     try:
         from core.db import get_db
+        from services.timetable_engine import open_sessions_for_date
+
         conn = get_db()
         cursor = conn.cursor(dictionary=True, buffered=True)
-
-        today = datetime.now().strftime("%Y-%m-%d")
-        day_name = datetime.now().strftime("%A")
-
-        # Check holiday
-        cursor.execute(
-            """
-            SELECT id FROM holiday_calendar
-            WHERE holiday_date = %s
-            AND (scope = 'college' OR department_id IS NULL)
-            """,
-            (today,)
-        )
-        if cursor.fetchone():
-            logger.info("Today (%s) is a holiday. Skipping session generation.", today)
-            return 0
-
-        # Get timetable slots — include start_time, end_time, source
-        cursor.execute(
-            """
-            SELECT t.id AS timetable_id, t.section_id,
-                   t.subject_id, t.faculty_id,
-                   t.start_time, t.end_time
-            FROM timetable t
-            JOIN academic_periods ap ON ap.id = t.academic_period_id
-            WHERE t.day_of_week = %s
-              AND ap.is_active = 1
-              AND t.slot_type NOT IN ('Interval', 'Lunch')
-              AND t.subject_id IS NOT NULL
-            """,
-            (day_name,)
-        )
-        slots = cursor.fetchall()
-
-        created = 0
-        for slot in slots:
-            # Primary dedup: by timetable_id + date
-            cursor.execute(
-                "SELECT id FROM sessions WHERE timetable_id = %s AND session_date = %s",
-                (slot["timetable_id"], today)
-            )
-            if cursor.fetchone():
-                continue  # Already exists
-            # Secondary dedup: by section+subject+faculty+date+start_time (handles legacy rows)
-            cursor.execute(
-                """SELECT id FROM sessions
-                   WHERE section_id=%s AND subject_id=%s AND faculty_id=%s
-                     AND session_date=%s AND start_time=%s""",
-                (slot["section_id"], slot["subject_id"], slot["faculty_id"],
-                 today, slot["start_time"])
-            )
-            if cursor.fetchone():
-                continue
-
-            cursor.execute(
-                """
-                INSERT INTO sessions
-                    (timetable_id, section_id, subject_id, faculty_id,
-                     session_date, start_time, end_time,
-                     status, source, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'scheduled', 'timetable', NOW())
-                """,
-                (slot["timetable_id"], slot["section_id"],
-                 slot["subject_id"], slot["faculty_id"],
-                 today, slot["start_time"], slot["end_time"])
-            )
-            session_id = cursor.lastrowid
-
-            cursor.execute(
-                "SELECT id, usn FROM students WHERE section_id = %s",
-                (slot["section_id"],)
-            )
-            students = cursor.fetchall()
-            for stu in students:
-                cursor.execute(
-                    """
-                    INSERT IGNORE INTO attendance
-                        (session_id, student_id, usn, status, method, marked_at)
-                    VALUES (%s, %s, %s, 'absent', 'system', NOW())
-                    """,
-                    (session_id, stu["id"], stu["usn"])
-                )
-            created += 1
-
+        res = open_sessions_for_date(cursor)
         conn.commit()
-        logger.info("Session generation: Created %s sessions for %s", created, today)
-        return created
+        logger.info("Session opening for %s: created %s, linked %s existing, "
+                    "planned classes seen %s",
+                    datetime.now().strftime("%Y-%m-%d"),
+                    res["created"], res["linked"], res["planned_today"])
+        return res["created"]
 
     except Exception as e:
         logger.error(f"Session generation error: {e}")
@@ -383,8 +681,6 @@ def _generate_todays_sessions(app):
                 conn.close()
         except Exception:
             pass
-
-
 # ============================================
 # Session Auto-Scheduler
 # ============================================
@@ -580,6 +876,9 @@ def create_app():
     from api.admin.settings import settings_bp
     from api.admin.subjects_maintenance import subj_maint_bp
     from api.admin.electives import electives_bp
+    from api.admin.academic_calendar import acad_calendar_bp
+    from api.admin.calendar_import import cal_import_bp
+    from api.admin.session_exceptions import sess_exc_bp
     from api.student.registration import student_reg_bp
     from api.mobile import mobile_bp
     
@@ -597,6 +896,9 @@ def create_app():
     app.register_blueprint(settings_bp, url_prefix="/admin/settings")
     app.register_blueprint(subj_maint_bp)
     app.register_blueprint(electives_bp)
+    app.register_blueprint(acad_calendar_bp, url_prefix="/admin/calendar")
+    app.register_blueprint(cal_import_bp, url_prefix="/admin/calendar/import")
+    app.register_blueprint(sess_exc_bp, url_prefix="/admin/exceptions")
     from api.admin.fingerprints import fingerprints_bp
     app.register_blueprint(fingerprints_bp)
     
@@ -620,6 +922,10 @@ def create_app():
 
     #mobile app blueprints 
     app.register_blueprint(mobile_bp,url_prefix="/api/mobile")
+
+    # Fingerprint API routes for direct USB device communication
+    from api.fingerprint_routes import fp_bp
+    app.register_blueprint(fp_bp)
 
     # ---- Scheduler ----
     if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:

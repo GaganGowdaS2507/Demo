@@ -142,3 +142,11 @@ Thumbs.db
 *.user
 *.userosv
 project-tree.txt
+
+
+
+# Generated Android / temporary files
+android/app/src/main/assets/index.android.bundle
+FingerprintAttendApp/.gradle/
+screen_fp.png
+ui.xml

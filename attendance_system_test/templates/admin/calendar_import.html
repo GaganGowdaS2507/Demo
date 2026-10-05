@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Import Academic Calendar{% endblock %}
+{% block page_title %}Import Academic Calendar{% endblock %}
+
+{% block content %}
+{% if not batch %}
+<div class="row">
+  <div class="col-lg-6 mb-3">
+    <div class="card shadow-sm"><div class="card-body">
+      <h6 class="fw-semibold mb-3">Upload calendar file</h6>
+      <form method="POST" action="{{ url_for('cal_import.upload') }}" enctype="multipart/form-data">
+        <div class="mb-3"><label class="form-label">Academic period</label>
+          <select name="period_id" class="form-select" required>
+            {% for p in periods %}<option value="{{ p.id }}">{{ p.name }} ({{ p.academic_year }}, Sem {{ p.sem_number }})</option>{% endfor %}
+          </select></div>
+        <div class="mb-3"><label class="form-label">File (CSV, Excel, Word, PDF or image; max 15 MB)</label>
+          <input type="file" name="file" class="form-control" accept=".csv,.xlsx,.docx,.pdf,.png,.jpg,.jpeg" required></div>
+        <div class="mb-3"><label class="form-label">If this period already has imported events</label>
+          <select name="mode" class="form-select">
+            <option value="append">Add to them (skip identical events)</option>
+            <option value="replace">Replace all earlier imported events of this period</option>
+          </select></div>
+        <button class="btn btn-primary">Upload &amp; preview</button>
+        <a href="{{ url_for('cal_import.template') }}" class="btn btn-outline-secondary">Download CSV template</a>
+      </form>
+      <p class="small text-muted mt-3 mb-0">Nothing is saved to the calendar until you review the preview and confirm.</p>
+    </div></div>
+  </div>
+  <div class="col-lg-6 mb-3">
+    <div class="card shadow-sm"><div class="card-body">
+      <h6 class="fw-semibold">Recent imports</h6>
+      <table class="table table-sm mb-0">
+        {% for b in recent %}<tr><td>{{ b.filename }}</td><td>{{ b.period }}</td>
+          <td><span class="badge bg-{{ 'success' if b.status=='committed' else 'secondary' }}">{{ b.status }}</span></td>
+          <td>{% if b.status=='preview' %}<a href="{{ url_for('cal_import.preview', batch_id=b.id) }}">open</a>{% endif %}</td></tr>
+        {% else %}<tr><td class="text-muted">None yet</td></tr>{% endfor %}
+      </table>
+    </div></div>
+  </div>
+</div>
+{% else %}
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <div><strong>{{ batch.filename }}</strong> <span class="text-muted small">({{ batch.source_type }})</span></div>
+  <div>
+    <span class="badge bg-success">{{ summary.ok }} ok</span>
+    <span class="badge bg-warning text-dark">{{ summary.warning }} warnings</span>
+    <span class="badge bg-danger">{{ summary.error }} errors</span>
+    <span class="badge bg-primary">{{ summary.importable }} will be imported</span>
+  </div>
+</div>
+{% if batch.status != 'preview' %}<div class="alert alert-secondary">This import is {{ batch.status }}.</div>{% endif %}
+<form method="POST" action="{{ url_for('cal_import.save', batch_id=batch.id) }}">
+<div class="table-responsive">
+<table class="table table-sm align-middle">
+  <thead><tr><th>Use</th><th>Line</th><th>Type</th><th>Title</th><th>Start</th><th>End</th><th>Scope</th>
+    <th>Dept</th><th>Sec</th><th>Impact</th><th>Working?</th><th>Check</th></tr></thead>
+  <tbody>
+  {% for r in batch.rows %}{% set i = loop.index0 %}
+  <tr class="{{ 'table-danger' if r.status=='error' else ('table-warning' if r.status=='warning' else '') }}">
+    <td><input type="checkbox" name="include_{{ i }}" value="1" {{ 'checked' if r.include }}></td>
+    <td>{{ r.line }}<input type="hidden" name="notes_{{ i }}" value="{{ r.notes }}"><input type="hidden" name="category_{{ i }}" value="{{ r.category }}"><input type="hidden" name="follow_weekday_{{ i }}" value="{{ r.follow_weekday }}"><input type="hidden" name="raw_text_{{ i }}" value="{{ r.raw_text }}"></td>
+    <td><input name="event_type_{{ i }}" value="{{ r.event_type }}" list="types" class="form-control form-control-sm" {{ 'disabled' if r.record_type=='day' }}></td>
+    <td><input name="title_{{ i }}" value="{{ r.title }}" class="form-control form-control-sm"></td>
+    <td><input name="start_date_{{ i }}" value="{{ r.start_date or '' }}" class="form-control form-control-sm" style="width:115px"></td>
+    <td><input name="end_date_{{ i }}" value="{{ r.end_date or '' }}" class="form-control form-control-sm" style="width:115px"></td>
+    <td><select name="scope_{{ i }}" class="form-select form-select-sm">
+      {% for s in ['college','department','section'] %}<option {{ 'selected' if r.scope==s }}>{{ s }}</option>{% endfor %}</select></td>
+    <td><input name="department_{{ i }}" value="{{ r.department }}" class="form-control form-control-sm" style="width:70px"></td>
+    <td><input name="section_{{ i }}" value="{{ r.section }}" class="form-control form-control-sm" style="width:55px"></td>
+    <td><select name="teaching_impact_{{ i }}" class="form-select form-select-sm">
+      <option value="">(type default{% if r.effective_impact %}: {{ r.effective_impact }}{% endif %})</option>
+      {% for m in impacts %}<option {{ 'selected' if r.teaching_impact==m }}>{{ m }}</option>{% endfor %}</select></td>
+    <td><select name="is_working_{{ i }}" class="form-select form-select-sm" style="width:80px">
+      <option value=""></option><option value="yes" {{ 'selected' if r.is_working == true }}>yes</option>
+      <option value="no" {{ 'selected' if r.is_working == false }}>no</option></select></td>
+    <td class="small">{% for m in r.issues %}<div class="{{ 'text-danger' if m.level=='error' else 'text-warning-emphasis' }}">{{ m.msg }}</div>{% endfor %}{% if r.raw_text %}<div class="text-muted fst-italic">Read from: {{ r.raw_text }}</div>{% endif %}{% if r.confidence < 1 %}<div class="text-muted">Confidence {{ (r.confidence * 100)|round|int }}%</div>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<datalist id="types">{% for t in types %}<option value="{{ t.code }}">{{ t.name }}</option>{% endfor %}</datalist>
+{% if batch.status == 'preview' %}
+<div class="d-flex gap-2 align-items-center">
+  <select name="mode" class="form-select form-select-sm" style="width:auto">
+    <option value="append" {{ 'selected' if batch.mode=='append' }}>Add to existing</option>
+    <option value="replace" {{ 'selected' if batch.mode=='replace' }}>Replace earlier imports</option></select>
+  <button name="action" value="recheck" class="btn btn-outline-primary">Re-check my corrections</button>
+  <button name="action" value="commit" class="btn btn-success"
+          onclick="return confirm('Import the selected rows into the academic calendar?')">Import {{ summary.importable }} rows</button>
+  <button formaction="{{ url_for('cal_import.discard', batch_id=batch.id) }}" class="btn btn-outline-danger ms-auto">Discard</button>
+</div>
+{% endif %}
+</form>
+{% endif %}
+{% endblock %}

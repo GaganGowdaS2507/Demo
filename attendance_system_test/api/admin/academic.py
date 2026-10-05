@@ -6,12 +6,19 @@ Academic Periods CRUD.
 
 from datetime import date
 import logging
+import csv
+import io
+import re
 
 from flask_login import login_required
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, Response
 from flask_login import current_user
 from core.db import get_db, get_cursor
 from auth.helpers import admin_required, log_audit, get_client_ip
+from services.semester_service import (
+    derive_semester, resolve_period, current_year_cycle, batch_year_cycle,
+    next_year_cycle, sync_batch, PeriodNotFound,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1611,25 +1618,38 @@ def add_period():
         conn = get_db()
         cursor = conn.cursor()
 
-        # Only one cycle per semester allowed
+        # Academic year label from the start date, e.g. 2026-27 (June onwards = new year)
+        start_year = int(start_date[0:4])
+        start_month = int(start_date[5:7])
+        first_year = start_year if start_month >= 6 else start_year - 1
+        academic_year = f"{first_year}-{str((first_year + 1) % 100).zfill(2)}"
+        cycle_enum = "ODD" if cycle_type == "Odd" else "EVEN"
+
+        # Only one cycle per semester PER ACADEMIC YEAR
         cursor.execute("""
             SELECT id
             FROM academic_periods
-            WHERE sem_number = %s
-        """, (sem_number,))
+            WHERE sem_number = %s AND academic_year = %s
+        """, (sem_number, academic_year))
         if cursor.fetchone():
-            flash("Cycle already exists for this level.", "warning")
+            flash(f"Cycle already exists for this level in {academic_year}.", "warning")
             return redirect(url_for("academic.periods"))
 
         cursor.execute("""
             INSERT INTO academic_periods
-                (name, sem_number, start_date, end_date, is_active, created_at)
-            VALUES (%s, %s, %s, %s, 0, NOW())
-        """, (name, sem_number, start_date, end_date))
+                (name, sem_number, start_date, end_date, is_active, created_at,
+                 cycle, cycle_type, academic_year)
+            VALUES (%s, %s, %s, %s, 0, NOW(), %s, %s, %s)
+        """, (name, sem_number, start_date, end_date,
+              cycle_enum, cycle_type, academic_year))
 
+        new_id = cursor.lastrowid
+
+        from services.sync_service import after_period_saved
+        sync = after_period_saved(conn.cursor(dictionary=True, buffered=True), new_id)
         conn.commit()
 
-        flash("Academic cycle created successfully.", "success")
+        flash("Academic cycle created successfully. " + sync["summary"], "success")
 
     except Exception as e:
         if conn:
@@ -1769,12 +1789,18 @@ def edit_period(period_id):
 
         ))
 
-        conn.commit()
+        from services.sync_service import after_period_saved
+        try:
+            sync = after_period_saved(conn.cursor(dictionary=True, buffered=True), period_id)
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            flash(f"Could not update the cycle: {exc}", "danger")
+            return redirect(url_for("academic.edit_period", period_id=period_id))
 
-        flash(
-            "Academic Cycle updated successfully.",
-            "success"
-        )
+        flash("Academic Cycle updated successfully. " + sync["summary"], "success")
+        for w in sync["warnings"]:
+            flash(w, "warning")
 
         return redirect(url_for("academic.periods"))
 
@@ -2024,7 +2050,8 @@ def batches():
 def add_batch():
 
     admission_year = request.form.get("admission_year", "").strip()
-    current_sem = request.form.get("current_sem", "1").strip()
+    # current_sem = request.form.get("current_sem", "1").strip()
+    # current_sem is derived, never accepted from the form
 
     if not admission_year:
         flash("Admission year is required.", "danger")
@@ -2052,28 +2079,21 @@ def add_batch():
 
         cursor.execute("""
             INSERT INTO batches
-            (
-                admission_year,
-                graduation_year,
-                current_sem,
-                label,
-                created_at
-            )
-            VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                NOW()
-            )
-        """,
-        (
-            admission_year,
-            graduation_year,
-            current_sem,
-            label
-        ))
+                (admission_year, graduation_year, current_sem, label, created_at)
+            VALUES (%s, %s, 1, %s, NOW())
+        """, (admission_year, graduation_year, label))
+        new_batch_id = cursor.lastrowid
+
+        # Align with the current academic year/cycle if it is already running
+        dcur = conn.cursor(dictionary=True)
+        ctx = current_year_cycle(dcur)
+        if ctx:
+            sem, state = derive_semester(int(admission_year), ctx[0], ctx[1])
+            if state == "ACTIVE":
+                cursor.execute(
+                    "UPDATE batches SET current_sem = %s WHERE id = %s",
+                    (sem, new_batch_id),
+                )
 
         conn.commit()
 
@@ -2089,25 +2109,54 @@ def add_batch():
     return redirect(url_for("academic.batches"))
 
 
+# @academic_bp.route("/batches/<int:batch_id>/edit", methods=["POST"])
+# @login_required
+# @admin_required
+# def edit_batch(batch_id):
+#     """Edit a batch."""
+#     current_sem = request.form.get("current_sem", "").strip()
+#     label = request.form.get("label", "").strip()
+
+#     if not current_sem:
+#         flash("Current semester is required.", "danger")
+#         return redirect(url_for("academic.batches"))
+
+#     conn = None
+#     try:
+#         conn = get_db()
+#         cursor = conn.cursor()
+#         cursor.execute(
+#             "UPDATE batches SET current_sem = %s, label = %s WHERE id = %s",
+#             (int(current_sem), label if label else None, batch_id)
+#         )
+#         conn.commit()
+#         log_audit(
+#             current_user.id, "edit_batch",
+#             "batches", batch_id, None, label or "",
+#             ip_address=get_client_ip()
+#         )
+#         flash("Batch updated.", "success")
+#     except Exception as e:
+#         if conn:
+#             conn.rollback()
+#         flash(f"Error: {e}", "danger")
+
+#     return redirect(url_for("academic.batches"))
+
 @academic_bp.route("/batches/<int:batch_id>/edit", methods=["POST"])
 @login_required
 @admin_required
 def edit_batch(batch_id):
-    """Edit a batch."""
-    current_sem = request.form.get("current_sem", "").strip()
+    """Edit a batch label. Semester is system-derived and cannot be edited."""
     label = request.form.get("label", "").strip()
-
-    if not current_sem:
-        flash("Current semester is required.", "danger")
-        return redirect(url_for("academic.batches"))
 
     conn = None
     try:
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE batches SET current_sem = %s, label = %s WHERE id = %s",
-            (int(current_sem), label if label else None, batch_id)
+            "UPDATE batches SET label = %s WHERE id = %s",
+            (label if label else None, batch_id)
         )
         conn.commit()
         log_audit(
@@ -2247,118 +2296,161 @@ def batch_workspace(batch_id):
         not_eligible_students=not_eligible_students
     )
 
+# @academic_bp.route("/batches/<int:batch_id>/promote", methods=["POST"])
+# @login_required
+# @admin_required
+# def promote_batch(batch_id):
+
+#     conn = None
+
+#     try:
+
+#         conn = get_db()
+#         cursor = conn.cursor(dictionary=True)
+
+#         # ---------------------------------
+#         # Read Batch
+#         # ---------------------------------
+
+#         cursor.execute("""
+#             SELECT *
+#             FROM batches
+#             WHERE id=%s
+#         """, (batch_id,))
+
+#         batch = cursor.fetchone()
+
+#         if not batch:
+#             flash("Batch not found.", "danger")
+#             return redirect(url_for("academic.batches"))
+
+#         current_sem = batch["current_sem"]
+
+#         if current_sem >= 8:
+#             # Final year graduation: mark batch as graduated alumni
+#             cursor.execute("UPDATE batches SET is_active = 0 WHERE id = %s", (batch_id,))
+#             cursor.execute(
+#                 """
+#                 UPDATE users u
+#                 JOIN students st ON st.user_id = u.id
+#                 JOIN sections sec ON sec.id = st.section_id
+#                 SET u.status = 'active'
+#                 WHERE sec.batch_id = %s
+#                 """,
+#                 (batch_id,)
+#             )
+#             conn.commit()
+#             flash(f"Batch {batch['admission_year']}-{batch['graduation_year']} has graduated and moved to Alumni status!", "success")
+#             return redirect(url_for("academic.batches"))
+
+#         next_sem = current_sem + 1
+
+#         # ---------------------------------
+#         # Update Batch
+#         # ---------------------------------
+
+#         cursor.execute("""
+#             UPDATE batches
+#             SET current_sem=%s
+#             WHERE id=%s
+#         """, (next_sem, batch_id))
+
+#         # ---------------------------------
+#         # Update Students
+#         # ---------------------------------
+
+#         cursor.execute("""
+#             UPDATE students
+#             SET current_sem=%s
+#             WHERE section_id IN (
+#                 SELECT id FROM sections WHERE batch_id=%s
+#             )
+#         """, (next_sem, batch_id))
+
+#         # ---------------------------------
+#         # Update Sections
+#         # ---------------------------------
+
+#         cursor.execute("""
+#             UPDATE sections
+#             SET sem_number=%s
+#             WHERE batch_id=%s
+#         """, (next_sem, batch_id))
+
+#         conn.commit()
+
+#         flash(
+#             f"Batch promoted from Semester {current_sem} to Semester {next_sem}.",
+#             "success"
+#         )
+
+#         cursor.execute("""
+#             SELECT id
+#             FROM sections
+#             WHERE batch_id=%s
+#         """, (batch_id,))
+
+#         sections = cursor.fetchall()
+
+#         for sec in sections:
+#             refresh_section_academics(sec["id"])
+
+#     except Exception as e:
+
+#         if conn:
+#             conn.rollback()
+
+#         flash(str(e), "danger")
+
+#     return redirect(
+#         url_for(
+#             "academic.batch_workspace",
+#             batch_id=batch_id
+#         )
+#     )
+
 @academic_bp.route("/batches/<int:batch_id>/promote", methods=["POST"])
 @login_required
 @admin_required
 def promote_batch(batch_id):
-
+    """Advance one batch to the next cycle. Semester + period are derived."""
     conn = None
-
     try:
-
         conn = get_db()
-        cursor = conn.cursor(dictionary=True)
+        cursor = conn.cursor(dictionary=True, buffered=True)
 
-        # ---------------------------------
-        # Read Batch
-        # ---------------------------------
-
-        cursor.execute("""
-            SELECT *
-            FROM batches
-            WHERE id=%s
-        """, (batch_id,))
-
-        batch = cursor.fetchone()
-
-        if not batch:
-            flash("Batch not found.", "danger")
+        ctx = batch_year_cycle(cursor, batch_id) or current_year_cycle(cursor)
+        if not ctx:
+            flash("No academic periods exist yet.", "danger")
             return redirect(url_for("academic.batches"))
 
-        current_sem = batch["current_sem"]
-
-        if current_sem >= 8:
-            # Final year graduation: mark batch as graduated alumni
-            cursor.execute("UPDATE batches SET is_active = 0 WHERE id = %s", (batch_id,))
-            cursor.execute(
-                """
-                UPDATE users u
-                JOIN students st ON st.user_id = u.id
-                JOIN sections sec ON sec.id = st.section_id
-                SET u.status = 'active'
-                WHERE sec.batch_id = %s
-                """,
-                (batch_id,)
-            )
-            conn.commit()
-            flash(f"Batch {batch['admission_year']}-{batch['graduation_year']} has graduated and moved to Alumni status!", "success")
-            return redirect(url_for("academic.batches"))
-
-        next_sem = current_sem + 1
-
-        # ---------------------------------
-        # Update Batch
-        # ---------------------------------
-
-        cursor.execute("""
-            UPDATE batches
-            SET current_sem=%s
-            WHERE id=%s
-        """, (next_sem, batch_id))
-
-        # ---------------------------------
-        # Update Students
-        # ---------------------------------
-
-        cursor.execute("""
-            UPDATE students
-            SET current_sem=%s
-            WHERE section_id IN (
-                SELECT id FROM sections WHERE batch_id=%s
-            )
-        """, (next_sem, batch_id))
-
-        # ---------------------------------
-        # Update Sections
-        # ---------------------------------
-
-        cursor.execute("""
-            UPDATE sections
-            SET sem_number=%s
-            WHERE batch_id=%s
-        """, (next_sem, batch_id))
-
+        target_year, target_cycle = next_year_cycle(*ctx)
+        result = sync_batch(cursor, batch_id, target_year, target_cycle)
         conn.commit()
 
-        flash(
-            f"Batch promoted from Semester {current_sem} to Semester {next_sem}.",
-            "success"
-        )
+        if result["state"] == "GRADUATED":
+            flash("Batch has completed Sem 8 and is now graduated.", "success")
+            return redirect(url_for("academic.batches"))
 
-        cursor.execute("""
-            SELECT id
-            FROM sections
-            WHERE batch_id=%s
-        """, (batch_id,))
-
-        sections = cursor.fetchall()
-
-        for sec in sections:
+        cursor.execute("SELECT id FROM sections WHERE batch_id = %s", (batch_id,))
+        for sec in cursor.fetchall():
             refresh_section_academics(sec["id"])
 
-    except Exception as e:
-
+        flash(
+            f"Batch moved to {target_year} {target_cycle.title()} - Semester {result['semester']}.",
+            "success",
+        )
+    except PeriodNotFound as e:
         if conn:
             conn.rollback()
-
+        flash(str(e), "warning")
+    except Exception as e:
+        if conn:
+            conn.rollback()
         flash(str(e), "danger")
 
-    return redirect(
-        url_for(
-            "academic.batch_workspace",
-            batch_id=batch_id
-        )
-    )
+    return redirect(url_for("academic.batch_workspace", batch_id=batch_id))
+
 # ============================================
 # SECTIONS
 # ============================================
@@ -2412,11 +2504,6 @@ def sections():
         "SELECT id, name, sem_number, is_active FROM academic_periods ORDER BY start_date DESC"
     )
     periods = cursor.fetchall()
-
-    cursor.execute(
-        "SELECT id, name FROM academic_periods WHERE is_active = 1 LIMIT 1"
-    )
-    active_period = cursor.fetchone()
 
     cursor.execute(
         """
@@ -2501,7 +2588,6 @@ def sections():
         departments=departments,
         batches=batches_list,
         periods=periods,
-        active_period=active_period,
         clusters=clusters,
         department_overview=department_overview,
         semester_overview=semester_overview,
@@ -2520,13 +2606,11 @@ def add_section():
     """Add a new section."""
     department_id = request.form.get("department_id", "").strip()
     batch_id = request.form.get("batch_id", "").strip()
-    academic_period_id = request.form.get("academic_period_id", "").strip()
     section_label = request.form.get("section_label", "").strip().upper()
-    sem_number = request.form.get("sem_number", "").strip()
     room = request.form.get("room", "").strip()
     cluster_id = request.form.get("cluster_id", "").strip()
 
-    if not department_id or not batch_id or not academic_period_id or not section_label or not sem_number or not cluster_id:
+    if not department_id or not batch_id or not section_label or not cluster_id:
         flash("All required fields, including cluster, must be filled.", "danger")
         return redirect(url_for("academic.sections"))
 
@@ -2535,14 +2619,27 @@ def add_section():
         conn = get_db()
         cursor = conn.cursor(dictionary=True, buffered=True)
 
-        cursor.execute(
-            "SELECT id FROM academic_periods WHERE id = %s LIMIT 1",
-            (int(academic_period_id),)
-        )
-        period = cursor.fetchone()
-        if not period:
-            flash("Selected academic period not found.", "danger")
+        cursor.execute("SELECT admission_year FROM batches WHERE id = %s", (int(batch_id),))
+        batch = cursor.fetchone()
+        if not batch:
+            flash("Batch not found.", "danger")
             return redirect(url_for("academic.sections"))
+
+        ctx = batch_year_cycle(cursor, int(batch_id)) or current_year_cycle(cursor)
+        if not ctx:
+            flash("No academic periods exist yet.", "danger")
+            return redirect(url_for("academic.sections"))
+
+        sem_number, state = derive_semester(batch["admission_year"], ctx[0], ctx[1])
+        if state != "ACTIVE":
+            flash(f"Batch is {state.replace('_', ' ').lower()} for {ctx[0]} {ctx[1]}.", "danger")
+            return redirect(url_for("academic.sections"))
+
+        period = resolve_period(cursor, ctx[0], ctx[1], sem_number)
+        if not period:
+            flash(f"Create Academic Period '{ctx[0]} {ctx[1].title()} - Sem {sem_number}' first.", "danger")
+            return redirect(url_for("academic.sections"))
+        academic_period_id = period["id"]
 
         cursor.execute(
             """
@@ -2605,11 +2702,10 @@ def add_section():
 def edit_section(section_id):
     """Edit a section."""
     room = request.form.get("room", "").strip()
-    sem_number = request.form.get("sem_number", "").strip()
     cluster_id = request.form.get("cluster_id", "").strip()
 
-    if not sem_number or not cluster_id:
-        flash("Semester number and cluster are required.", "danger")
+    if not cluster_id:
+        flash("Cluster is required.", "danger")
         return redirect(url_for("academic.sections"))
 
     conn = None
@@ -2641,8 +2737,8 @@ def edit_section(section_id):
             return redirect(url_for("academic.sections"))
 
         cursor.execute(
-            "UPDATE sections SET room = %s, sem_number = %s WHERE id = %s",
-            (room if room else None, int(sem_number), section_id)
+            "UPDATE sections SET room = %s WHERE id = %s",
+            (room if room else None, section_id)
         )
         cursor.execute(
             "DELETE FROM cluster_sections WHERE section_id = %s",
@@ -2984,6 +3080,385 @@ def add_subject():
             conn.rollback()
 
         flash(f"Error: {e}", "danger")
+
+    return redirect(url_for("academic.subjects"))
+
+
+@academic_bp.route("/subjects/template", methods=["GET"])
+@login_required
+@admin_required
+def download_subject_template():
+    """Generates and serves a downloadable CSV template for bulk subject import."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Header row
+    writer.writerow([
+        "subject_code",
+        "subject_name",
+        "department",
+        "semester",
+        "credits",
+        "subject_type",
+        "offering_mode"
+    ])
+
+    # Fetch existing departments to give context-aware sample data
+    sample_dept = "CSE"
+    try:
+        cursor = get_cursor()
+        cursor.execute("SELECT code FROM departments ORDER BY id LIMIT 1")
+        row = cursor.fetchone()
+        if row and row.get("code"):
+            sample_dept = row["code"].strip().upper()
+    except Exception:
+        pass
+
+    # Sample rows
+    writer.writerow([f"21{sample_dept}51", "Management and Entrepreneurship", sample_dept, "5", "3", "Theory", "regular"])
+    writer.writerow([f"21{sample_dept}52", "Computer Networks & Security", sample_dept, "5", "4", "Theory", "regular"])
+    writer.writerow([f"21{sample_dept}53", "Database Management Systems", sample_dept, "5", "4", "Theory", "regular"])
+    writer.writerow([f"21{sample_dept}54", "Automata Theory and Computability", sample_dept, "5", "3", "Theory", "regular"])
+    writer.writerow([f"21{sample_dept}L56", "Computer Networks Laboratory", sample_dept, "5", "2", "Lab", "regular"])
+    writer.writerow([f"21{sample_dept}L57", "DBMS Laboratory with Mini Project", sample_dept, "5", "2", "Lab", "regular"])
+    writer.writerow([f"21{sample_dept}58", "Research Methodology and IPR", sample_dept, "5", "2", "Theory", "regular"])
+
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=subjects_bulk_upload_template.csv",
+            "Content-Type": "text/csv; charset=utf-8"
+        }
+    )
+
+
+@academic_bp.route("/subjects/bulk-upload", methods=["POST"])
+@login_required
+@admin_required
+def bulk_upload_subjects():
+    """
+    Bulk import subjects from uploaded CSV file.
+    Validates department, semester, credits, subject_type, and offering_mode.
+    """
+    if "file" not in request.files:
+        flash("No file was uploaded.", "danger")
+        return redirect(url_for("academic.subjects"))
+
+    file = request.files["file"]
+    if not file or not file.filename:
+        flash("Please select a valid CSV file to upload.", "danger")
+        return redirect(url_for("academic.subjects"))
+
+    if not file.filename.lower().endswith(".csv"):
+        flash("Invalid file format. Please upload a .csv file.", "danger")
+        return redirect(url_for("academic.subjects"))
+
+    update_existing = request.form.get("update_existing") in ("1", "true", "on")
+
+    # Read content with multiple encoding fallbacks (UTF-8-SIG for Excel BOM, UTF-8, Latin-1)
+    try:
+        file_bytes = file.read()
+        try:
+            content = file_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            try:
+                content = file_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                content = file_bytes.decode("latin-1")
+    except Exception as e:
+        flash(f"Error reading file content: {e}", "danger")
+        return redirect(url_for("academic.subjects"))
+
+    if not content.strip():
+        flash("The uploaded CSV file is empty.", "warning")
+        return redirect(url_for("academic.subjects"))
+
+    # Parse CSV
+    try:
+        reader = csv.DictReader(io.StringIO(content))
+        if not reader.fieldnames:
+            flash("CSV file contains no header row.", "danger")
+            return redirect(url_for("academic.subjects"))
+    except Exception as e:
+        flash(f"Failed to parse CSV: {e}", "danger")
+        return redirect(url_for("academic.subjects"))
+
+    # Map headers flexibly (ignore case, spaces, underscores, hyphens)
+    raw_headers = reader.fieldnames
+    header_map = {}
+    for h in raw_headers:
+        if h:
+            cleaned = re.sub(r"[^a-zA-Z0-9]", "", h).lower()
+            header_map[cleaned] = h
+
+    def get_val(row_dict, *candidates):
+        for cand in candidates:
+            # direct check
+            if cand in row_dict and row_dict[cand] is not None:
+                val = str(row_dict[cand]).strip()
+                if val:
+                    return val
+            # normalized check
+            cand_clean = re.sub(r"[^a-zA-Z0-9]", "", cand).lower()
+            if cand_clean in header_map:
+                orig_header = header_map[cand_clean]
+                if orig_header in row_dict and row_dict[orig_header] is not None:
+                    val = str(row_dict[orig_header]).strip()
+                    if val:
+                        return val
+        return ""
+
+    conn = None
+    try:
+        conn = get_db()
+        cursor = conn.cursor(dictionary=True)
+
+        # Build Department Lookup Map (Code, Name, and ID)
+        cursor.execute("SELECT id, code, name FROM departments")
+        dept_rows = cursor.fetchall()
+        dept_lookup = {}
+        for d in dept_rows:
+            d_id = d["id"]
+            if d.get("code"):
+                dept_lookup[d["code"].strip().upper()] = d_id
+            if d.get("name"):
+                dept_lookup[d["name"].strip().upper()] = d_id
+            dept_lookup[str(d_id)] = d_id
+
+        # Standard Subject Types
+        VALID_TYPES = {
+            "THEORY": "Theory",
+            "LAB": "Lab",
+            "THEORY-LAB-INTEGRATED": "Theory-Lab-Integrated",
+            "THEORYLABINTEGRATED": "Theory-Lab-Integrated",
+            "INTEGRATED": "Theory-Lab-Integrated",
+            "THEORY-LAB": "Theory-Lab-Integrated",
+            "THEORYLAB": "Theory-Lab-Integrated",
+            "LAB-MERGED": "Lab-Merged",
+            "LABMERGED": "Lab-Merged",
+            "ELECTIVE-THEORY": "Elective-Theory",
+            "ELECTIVETHEORY": "Elective-Theory",
+            "ELECTIVE-LAB": "Elective-Lab",
+            "ELECTIVELAB": "Elective-Lab"
+        }
+
+        # Standard Offering Modes
+        VALID_MODES = {
+            "REGULAR": "regular",
+            "CORE": "regular",
+            "MANDATORY": "regular",
+            "PROFESSIONAL_ELECTIVE": "professional_elective",
+            "PROFESSIONAL-ELECTIVE": "professional_elective",
+            "PROFESSIONALELECTIVE": "professional_elective",
+            "PE": "professional_elective",
+            "OPEN_ELECTIVE": "open_elective",
+            "OPEN-ELECTIVE": "open_elective",
+            "OPENELECTIVE": "open_elective",
+            "OE": "open_elective",
+            "ABILITY_ENHANCEMENT": "ability_enhancement",
+            "ABILITY-ENHANCEMENT": "ability_enhancement",
+            "ABILITYENHANCEMENT": "ability_enhancement",
+            "AEC": "ability_enhancement",
+            "SEC": "ability_enhancement",
+            "SKILL": "ability_enhancement"
+        }
+
+        # Pre-load existing subjects by code
+        cursor.execute("SELECT id, code, name, department_id, sem_number, credits, subject_type, offering_mode FROM subjects")
+        existing_subjects = {
+            s["code"].strip().upper(): s
+            for s in cursor.fetchall()
+            if s.get("code")
+        }
+
+        added_count = 0
+        updated_count = 0
+        skipped_count = 0
+        row_errors = []
+
+        row_index = 1  # 1-based (header is row 1)
+        for row in reader:
+            row_index += 1
+
+            code = get_val(row, "subject_code", "code", "course_code", "sub_code", "subjectcode", "coursecode")
+            name = get_val(row, "subject_name", "name", "course_name", "subject", "title", "subjectname", "coursename")
+            dept_raw = get_val(row, "department", "dept", "department_code", "dept_code", "department_name", "dept_name", "department_id")
+            sem_raw = get_val(row, "semester", "sem", "sem_number", "semester_number", "sem_no", "semesternumber", "semno")
+            credits_raw = get_val(row, "credits", "credit", "cr", "credit_hours")
+            type_raw = get_val(row, "subject_type", "type", "subject_type_name", "subtype")
+            mode_raw = get_val(row, "offering_mode", "mode", "offeringmode", "typemode")
+
+            # Skip empty lines
+            if not code and not name and not dept_raw and not sem_raw:
+                continue
+
+            if not code:
+                row_errors.append(f"Row {row_index}: Subject Code is missing.")
+                continue
+
+            if not name:
+                row_errors.append(f"Row {row_index} ({code}): Subject Name is missing.")
+                continue
+
+            code_clean = code.strip().upper()
+            name_clean = name.strip()
+
+            # Department Resolution
+            dept_id = None
+            if dept_raw:
+                dept_clean = dept_raw.strip().upper()
+                if dept_clean in dept_lookup:
+                    dept_id = dept_lookup[dept_clean]
+                elif dept_clean in ("GENERAL", "NONE", "NULL", "ALL", "-", "0"):
+                    dept_id = None
+                else:
+                    # Partial matching fallback
+                    matched_id = None
+                    for k, v in dept_lookup.items():
+                        if k in dept_clean or dept_clean in k:
+                            matched_id = v
+                            break
+                    if matched_id:
+                        dept_id = matched_id
+                    else:
+                        row_errors.append(f"Row {row_index} ({code_clean}): Department '{dept_raw}' not found in database.")
+                        continue
+
+            # Semester Resolution (1 to 8 or None for General)
+            sem_number = None
+            if sem_raw:
+                digits = "".join(filter(str.isdigit, sem_raw))
+                if digits:
+                    s_num = int(digits)
+                    if 1 <= s_num <= 8:
+                        sem_number = s_num
+                    else:
+                        row_errors.append(f"Row {row_index} ({code_clean}): Semester '{sem_raw}' is out of range (1-8).")
+                        continue
+                elif sem_raw.strip().lower() in ("general", "none", "null", "all", "-"):
+                    sem_number = None
+                else:
+                    row_errors.append(f"Row {row_index} ({code_clean}): Invalid semester value '{sem_raw}'.")
+                    continue
+
+            # Credits Resolution
+            credits = 0
+            if credits_raw:
+                try:
+                    c_num = int(float(credits_raw))
+                    credits = max(0, c_num)
+                except (ValueError, TypeError):
+                    credits = 0
+
+            # Subject Type Resolution
+            subject_type = "Theory"
+            if type_raw:
+                type_norm = re.sub(r"[^a-zA-Z0-9]", "", type_raw).upper()
+                subject_type = VALID_TYPES.get(type_norm, "Theory")
+
+            # Offering Mode Resolution
+            offering_mode = "regular"
+            if mode_raw:
+                mode_norm = re.sub(r"[^a-zA-Z0-9]", "", mode_raw).upper()
+                offering_mode = VALID_MODES.get(mode_norm, "regular")
+
+            # Check if subject code already exists
+            if code_clean in existing_subjects:
+                existing_item = existing_subjects[code_clean]
+                if update_existing:
+                    cursor.execute("""
+                        UPDATE subjects
+                        SET name = %s,
+                            department_id = %s,
+                            sem_number = %s,
+                            subject_type = %s,
+                            offering_mode = %s,
+                            credits = %s
+                        WHERE id = %s
+                    """, (
+                        name_clean,
+                        dept_id,
+                        sem_number,
+                        subject_type,
+                        offering_mode,
+                        credits,
+                        existing_item["id"]
+                    ))
+                    updated_count += 1
+                else:
+                    skipped_count += 1
+            else:
+                cursor.execute("""
+                    INSERT INTO subjects
+                    (
+                        code,
+                        name,
+                        department_id,
+                        sem_number,
+                        subject_type,
+                        offering_mode,
+                        credits,
+                        created_at
+                    )
+                    VALUES
+                    (
+                        %s, %s, %s, %s, %s, %s, %s, NOW()
+                    )
+                """, (
+                    code_clean,
+                    name_clean,
+                    dept_id,
+                    sem_number,
+                    subject_type,
+                    offering_mode,
+                    credits
+                ))
+                new_sub_id = cursor.lastrowid
+                existing_subjects[code_clean] = {
+                    "id": new_sub_id,
+                    "code": code_clean,
+                    "name": name_clean
+                }
+                added_count += 1
+
+        conn.commit()
+
+        log_audit(
+            current_user.id,
+            "bulk_upload_subjects",
+            "subjects",
+            None,
+            None,
+            f"Imported: {added_count} added, {updated_count} updated, {skipped_count} skipped.",
+            ip_address=get_client_ip()
+        )
+
+        msg_parts = []
+        if added_count > 0:
+            msg_parts.append(f"{added_count} subject(s) added successfully")
+        if updated_count > 0:
+            msg_parts.append(f"{updated_count} subject(s) updated")
+        if skipped_count > 0:
+            msg_parts.append(f"{skipped_count} subject(s) skipped (already existing)")
+
+        if msg_parts:
+            flash("Bulk Upload Complete: " + ", ".join(msg_parts) + ".", "success")
+        elif not row_errors:
+            flash("No valid subject rows were found in the uploaded CSV file.", "info")
+
+        if row_errors:
+            error_preview = "; ".join(row_errors[:5])
+            if len(row_errors) > 5:
+                error_preview += f" ... and {len(row_errors) - 5} more issues."
+            flash(f"CSV Warnings ({len(row_errors)} rows skipped/flagged): {error_preview}", "warning")
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.exception("Error during subjects bulk CSV upload")
+        flash(f"Error processing CSV upload: {e}", "danger")
 
     return redirect(url_for("academic.subjects"))
 

@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}Academic Calendar{% endblock %}
+{% block page_title %}Academic Calendar{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+    <form method="GET" class="d-flex align-items-center gap-2">
+        <label class="form-label mb-0 small fw-semibold">Semester</label>
+        <select name="period_id" class="form-select form-select-sm" style="min-width:280px"
+                onchange="this.form.submit()">
+            {% for p in periods %}
+            <option value="{{ p.id }}" {{ 'selected' if selected and p.id == selected.id }}>
+                {{ p.name }} ({{ p.academic_year or '-' }}, Sem {{ p.sem_number }}){{ ' - Active' if p.is_active }}
+            </option>
+            {% endfor %}
+        </select>
+    </form>
+    {% if selected %}
+    <small class="text-muted">
+        Teaching window: {{ selected.start_date.strftime('%d %b %Y') }} to {{ selected.end_date.strftime('%d %b %Y') }}
+    </small>
+    {% endif %}
+    <a href="{{ url_for('cal_import.index') }}" class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-upload"></i> Import Calendar
+    </a>
+</div>
+
+{% if not selected %}
+<div class="alert alert-warning">Create an Academic Period first.</div>
+{% else %}
+<div class="row">
+    <div class="col-lg-8 mb-3">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                <h6 class="mb-0"><i class="bi bi-calendar-event"></i> Events ({{ events|length }})</h6>
+            </div>
+            <div class="card-body p-0">
+                {% if events %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle small">
+                        <thead class="table-light">
+                            <tr><th>Dates</th><th>Event</th><th>Type</th><th>Time</th><th>Applies to</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                        {% for e in events %}
+                            <tr>
+                                <td class="fw-semibold text-nowrap">
+                                    {{ e.start_date.strftime('%d %b') }}{% if e.days > 1 %} - {{ e.end_date.strftime('%d %b') }}{% endif %}
+                                    <div class="text-muted fw-normal">{{ e.start_date.strftime('%a') }}{% if e.days > 1 %} ({{ e.days }} days){% endif %}</div>
+                                </td>
+                                <td>
+                                    {{ e.title }}
+                                    {% if e.follow_weekday %}<div class="text-muted">Follows {{ e.follow_weekday }} timetable</div>{% endif %}
+                                    {% if e.notes %}<div class="text-muted">{{ e.notes }}</div>{% endif %}
+                                    {% if not e.academic_period_id %}<span class="badge bg-secondary">All semesters</span>{% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge" style="background:{{ e.type_color or '#6c757d' }}">{{ e.type_name }}</span>
+                                    <div class="text-muted">
+                                        {% if e.effect == 'blocks_teaching' %}No classes
+                                        {% elif e.effect == 'allows_teaching' %}Classes run
+                                        {% else %}Info only{% endif %}
+                                    </div>
+                                </td>
+                                <td class="text-nowrap">{{ e.time_text }}</td>
+                                <td>
+                                    {% if e.scope == 'college' %}Whole college
+                                    {% elif e.scope == 'department' %}Dept {{ e.dept_code }}
+                                    {% else %}Section {{ e.dept_code or '' }} {{ e.section_label or '' }}{% endif %}
+                                </td>
+                                <td>
+                                    <form method="POST" action="{{ url_for('acad_calendar.delete_event', event_id=e.id) }}"
+                                          onsubmit="return confirm('Remove this event? Classes it cancelled will be restored.')">
+                                        <input type="hidden" name="period_id" value="{{ selected.id }}">
+                                        <button class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-trash"></i></button>
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4 text-muted">No events yet for this semester.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-plus-circle"></i> Add Event</h6></div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('acad_calendar.add_event') }}">
+                    <input type="hidden" name="period_id" value="{{ selected.id }}">
+
+                    <div class="mb-3">
+                        <label class="form-label">Type *</label>
+                        <select class="form-select" name="event_type_id" id="typeSelect" onchange="refreshForm()" required>
+                            {% for t in event_types %}
+                            <option value="{{ t.id }}" data-effect="{{ t.effect }}">{{ t.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text" id="effectHint"></div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Title *</label>
+                        <input type="text" class="form-control" name="title" placeholder="e.g. Ganesha Chaturthi" required>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label">From *</label>
+                            <input type="date" class="form-control" name="start_date" required>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label">To</label>
+                            <input type="date" class="form-control" name="end_date">
+                        </div>
+                    </div>
+
+                    <div class="row" id="timeRow">
+                        <div class="col-6 mb-3">
+                            <label class="form-label">Start time</label>
+                            <input type="time" class="form-control" name="start_time">
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label">End time</label>
+                            <input type="time" class="form-control" name="end_time">
+                        </div>
+                        <div class="form-text mt-n2 mb-3">Leave both empty for the whole day.</div>
+                    </div>
+
+                    <div class="mb-3 d-none" id="followRow">
+                        <label class="form-label">Follow timetable of</label>
+                        <select class="form-select" name="follow_weekday">
+                            <option value="">Normal weekday</option>
+                            {% for d in weekdays %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Applies to</label>
+                        <select class="form-select" name="scope" id="scopeSelect" onchange="refreshForm()">
+                            <option value="college">Whole college</option>
+                            <option value="department">One department</option>
+                            <option value="section">One section</option>
+                        </select>
+                    </div>
+                    <div class="mb-3 d-none" id="deptRow">
+                        <select class="form-select" name="department_id">
+                            <option value="">Select department</option>
+                            {% for d in departments %}<option value="{{ d.id }}">{{ d.code }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3 d-none" id="secRow">
+                        <select class="form-select" name="section_id">
+                            <option value="">Select section</option>
+                            {% for s in sections %}<option value="{{ s.id }}">{{ s.dept_code }}-{{ s.section_label }}</option>{% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Semester</label>
+                        <select class="form-select" name="apply_to">
+                            <option value="period">Only this semester</option>
+                            <option value="all">All semesters (e.g. national holiday)</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Notes</label>
+                        <input type="text" class="form-control" name="notes" maxlength="255">
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100"><i class="bi bi-plus"></i> Add Event</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+function refreshForm() {
+    var typeSel = document.getElementById('typeSelect');
+    if (!typeSel) return;
+    var effect = typeSel.options[typeSel.selectedIndex].getAttribute('data-effect');
+    var hints = {
+        blocks_teaching: 'No classes on these dates. Scheduled classes will be cancelled.',
+        allows_teaching: 'Classes run on these dates, even if it is a holiday or Sunday.',
+        info_only: 'Shown on the calendar only. Classes are not affected.'
+    };
+    document.getElementById('effectHint').textContent = hints[effect] || '';
+    document.getElementById('followRow').classList.toggle('d-none', effect !== 'allows_teaching');
+    document.getElementById('timeRow').classList.toggle('d-none', effect === 'allows_teaching');
+
+    var scope = document.getElementById('scopeSelect').value;
+    document.getElementById('deptRow').classList.toggle('d-none', scope !== 'department');
+    document.getElementById('secRow').classList.toggle('d-none', scope !== 'section');
+}
+refreshForm();
+</script>
+{% endblock %}

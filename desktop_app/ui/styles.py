@@ -47,12 +47,14 @@ QLabel#subheading {
     color: #94a3b8;
 }
 
+
 QLabel#badge {
     background-color: #3b82f6;
     color: white;
     font-weight: bold;
     padding: 4px 10px;
     border-radius: 12px;
+    max-height: 22px;
 }
 
 /* Buttons */
@@ -86,6 +88,11 @@ QPushButton#secondary {
 
 QPushButton#secondary:hover {
     background-color: #475569;
+}
+
+QPushButton#secondary:checked {
+    background-color: #2563eb;
+    color: white;
 }
 
 QPushButton#success {

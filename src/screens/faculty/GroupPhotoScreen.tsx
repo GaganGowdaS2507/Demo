@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, Image, ScrollView, StyleSheet, Alert, Pressable, ActivityIndicator, FlatList,
+  Platform, PermissionsAndroid,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
@@ -40,23 +41,93 @@ export const GroupPhotoScreen: React.FC = () => {
   const [totalFaces, setTotalFaces] = useState<number>(0);
   const [hasRecognized, setHasRecognized] = useState(false);
 
-  const addPhoto = (type: 'camera' | 'library') => {
+  const requestCameraPermission = async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') return true;
+
+    try {
+      const alreadyGranted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
+      if (alreadyGranted) {
+        return true;
+      }
+
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.CAMERA,
+        {
+          title: 'Camera Permission Needed',
+          message: 'AttendAI requires camera access to capture classroom attendance photos.',
+          buttonNeutral: 'Ask Me Later',
+          buttonNegative: 'Cancel',
+          buttonPositive: 'Grant Permission',
+        },
+      );
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    } catch (err) {
+      console.warn('[GroupPhoto] Camera permission request error:', err);
+      return false;
+    }
+  };
+
+  const addPhoto = async (type: 'camera' | 'library') => {
     if (photos.length >= 3) {
       Alert.alert('Limit Reached', 'You can upload maximum 3 classroom photos per session.');
       return;
     }
 
-    const options = { mediaType: 'photo' as const, quality: 0.9 as const };
-    const launcher = type === 'camera' ? launchCamera : launchImageLibrary;
+    if (type === 'camera') {
+      const hasPermission = await requestCameraPermission();
+      if (!hasPermission) {
+        Alert.alert(
+          'Permission Required',
+          'Camera permission is required to capture classroom photos. Please grant camera permission in App Settings.',
+        );
+        return;
+      }
+    }
 
-    launcher(options, (response) => {
+    const options = {
+      mediaType: 'photo' as const,
+      quality: 0.9 as const,
+      saveToPhotos: false,
+      cameraType: 'back' as const,
+      includeBase64: false,
+    };
+
+    try {
+      const response =
+        type === 'camera'
+          ? await launchCamera(options)
+          : await launchImageLibrary(options);
+
+      if (response.didCancel) {
+        return;
+      }
+
+      if (response.errorCode) {
+        console.warn(`[GroupPhoto] ${type} picker error:`, response.errorCode, response.errorMessage);
+        if (response.errorCode === 'camera_unavailable') {
+          Alert.alert('Camera Unavailable', 'Camera is not available on this device.');
+        } else if (response.errorCode === 'permission') {
+          Alert.alert(
+            'Permission Denied',
+            'Camera or storage permission was denied. Please check your app settings.',
+          );
+        } else {
+          Alert.alert('Error', response.errorMessage ?? 'Failed to capture or select photo.');
+        }
+        return;
+      }
+
       if (response.assets && response.assets.length > 0) {
         const uri = response.assets[0].uri;
         if (uri) {
           setPhotos((prev) => [...prev, uri]);
+          setHasRecognized(false);
         }
       }
-    });
+    } catch (err: any) {
+      console.warn(`[GroupPhoto] ${type} error:`, err);
+      Alert.alert('Error', err?.message ?? `Failed to open ${type}`);
+    }
   };
 
   const removePhoto = (index: number) => {

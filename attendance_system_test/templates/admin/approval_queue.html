@@ -42,8 +42,8 @@
                                         <select class="form-select" name="section_id" required><option value="">Select Section</option>
                                             {% for s in sections %}<option value="{{ s.id }}">{{ s.dept_code }}-{{ s.section_label }} (Sem {{ s.sem_number }})</option>{% endfor %}
                                         </select></div>
-                                    <div class="mb-3"><label class="form-label">Current Semester</label>
-                                        <input type="number" class="form-control" name="current_sem" min="1" max="8"></div>
+                                    <!-- <div class="mb-3"><label class="form-label">Current Semester</label>
+                                        <input type="number" class="form-control" name="current_sem" min="1" max="8"></div> -->
                                 </div>
                                 <div class="modal-footer"><button type="submit" class="btn btn-success"><i class="bi bi-check-lg"></i> Approve & Assign</button></div>
                             </form>
